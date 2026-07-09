@@ -1,0 +1,10 @@
+@import "tailwindcss";
+
+body {
+  background-color: #f1f5f9; /* slate-100 */
+  color: #0f172a;
+}
+
+.scrollbar-thin::-webkit-scrollbar { width: 4px; }
+.scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+.scrollbar-thin::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 2px; }
