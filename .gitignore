@@ -1,0 +1,56 @@
+# Entorno Python
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Variables de entorno — NUNCA al repo
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+logs/
+backend_out.log
+backend_err.log
+frontend_out.log
+frontend_err.log
+uvicorn.log
+uvicorn_err.log
+
+# Uploads (archivos subidos por usuarios)
+uploads/
+
+# Alembic
+# (las migraciones SÍ se versionen)
+
+# Node / Next.js
+frontend/node_modules/
+frontend/.next/
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+
+# Diagnósticos / scripts temporales
+diag_*.py
+
+# Sistema
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.suo
+*.user
+
+# Claude Code
+.claude/
