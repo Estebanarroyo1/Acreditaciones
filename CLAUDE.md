@@ -64,6 +64,12 @@ npm run build        # Verificar que compila sin errores de TS
 .venv\Scripts\alembic.exe upgrade head
 .venv\Scripts\alembic.exe history          # ver estado
 
+# Tests (desde C:\Acreditaciones con .venv activo)
+.venv\Scripts\pytest.exe                 # toda la suite (75 tests)
+.venv\Scripts\pytest.exe tests/unit/     # solo unitarios (sin DB)
+.venv\Scripts\pytest.exe tests/integration/  # solo integración (SQLite en memoria)
+.venv\Scripts\pytest.exe -v              # verbose
+
 # Git
 git add <archivos>
 git commit -m "mensaje"

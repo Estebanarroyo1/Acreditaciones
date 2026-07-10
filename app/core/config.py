@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     NOTIFICATION_HOUR: int = 8
     NOTIFICATION_MINUTE: int = 0
 
+    # CORS — comma-separated origins; override in production
+    CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:3001"]
+
     # OpenAI — leave empty to disable AI extraction
     OPENAI_API_KEY: str = ""
     OPENAI_MODEL: str = "gpt-4o"

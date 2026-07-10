@@ -15,6 +15,7 @@ from app.schemas.accreditation import (
     TrafficLight,
     WorkerGlobalStatus,
 )
+from app.models.document_type import ACHS_VALIDITY_DAYS
 from app.services.alert_rules import load_global_pct, effective_pct, is_expiring_soon
 
 _INVALID = (DocumentStatus.REJECTED,)
@@ -225,7 +226,6 @@ async def evaluate_accreditation(
         summary = f"ROJO — Documentos faltantes o vencidos: {', '.join(c.document_type_name for c in bad)}."
     elif warn:
         light = TrafficLight.YELLOW
-        pct_label = global_pct
         summary = (
             f"AMARILLO — Próximos a vencer: "
             f"{', '.join(f'{c.document_type_name} ({c.days_until_expiry}d)' for c in warn)}."

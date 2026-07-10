@@ -17,10 +17,9 @@ from app.models.associations import (
 from app.models.document_type import DocumentType
 from app.schemas.worker_document import WorkerDocumentRead, WorkerDocumentUpdate
 from app.services.storage import save_upload
+from app.services.worker_documents import resolve_document_dates
 
 router = APIRouter(prefix="/worker-documents", tags=["worker-documents"])
-
-_VALID_UPLOAD_STATUSES = {DocumentStatus.PENDING, DocumentStatus.APPROVED}
 
 
 @router.post("/ai-scan", summary="Analizar documento con IA y extraer fechas (sin guardar)")
@@ -126,55 +125,10 @@ async def upload_document(
                     detail="Ese tipo de documento no es requerido por el proyecto.",
                 )
 
-    # --- Parse optional dates ---
-    parsed_issue: date | None = None
-    parsed_expiry: date | None = None
-    try:
-        if issue_date:
-            parsed_issue = date.fromisoformat(issue_date)
-        if expiry_date:
-            parsed_expiry = date.fromisoformat(expiry_date)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Formato de fecha inválido. Use YYYY-MM-DD.",
-        )
-
-    # --- AI date extraction (fills in missing dates from the document) ---
-    from app.core.config import settings
-    if settings.OPENAI_API_KEY:
-        from app.services.worker_ai_extractor import extract_dates
-        content = await file.read()
-        try:
-            ai = await extract_dates(content, file.content_type or "", file.filename or "", doc_type.name)
-            if parsed_issue is None and ai.get("issue_date"):
-                try:
-                    parsed_issue = date.fromisoformat(ai["issue_date"])
-                except ValueError:
-                    pass
-            if parsed_expiry is None and ai.get("expiry_date"):
-                try:
-                    parsed_expiry = date.fromisoformat(ai["expiry_date"])
-                except ValueError:
-                    pass
-        except Exception:
-            pass  # AI failure is non-blocking
-        await file.seek(0)
-
-    # validity_days as last-resort fallback only when neither user nor AI provided expiry
-    if parsed_expiry is None and doc_type.effective_validity_days and parsed_issue:
-        parsed_expiry = parsed_issue + timedelta(days=doc_type.effective_validity_days)
-
-    # --- Fail-Fast: block already-expired documents ---
-    if parsed_expiry is not None and parsed_expiry < date.today():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                f"Bloqueo del sistema: El documento ya se encuentra vencido. "
-                f"Fecha de caducidad calculada: {parsed_expiry.strftime('%d-%m-%Y')}. "
-                f"No se permite su ingreso."
-            ),
-        )
+    # --- Date resolution: parse + AI fill + validity fallback + expired check ---
+    parsed_issue, parsed_expiry = await resolve_document_dates(
+        issue_date, expiry_date, file, doc_type.name, doc_type.effective_validity_days
+    )
 
     # --- Persist the file ---
     file_path, mime_type, file_size = await save_upload(
@@ -273,56 +227,11 @@ async def edit_document(
     if not doc:
         raise HTTPException(status_code=404, detail="Documento no encontrado.")
 
-    parsed_issue: date | None = None
-    parsed_expiry: date | None = None
-    try:
-        if issue_date:
-            parsed_issue = date.fromisoformat(issue_date)
-        if expiry_date:
-            parsed_expiry = date.fromisoformat(expiry_date)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Formato de fecha inválido. Use YYYY-MM-DD.",
-        )
-
-    if file is not None:
-        # AI date extraction from the new file
-        from app.core.config import settings
-        if settings.OPENAI_API_KEY:
-            from app.services.worker_ai_extractor import extract_dates
-            dt_name = doc.document_type.name if doc.document_type else None
-            content = await file.read()
-            try:
-                ai = await extract_dates(content, file.content_type or "", file.filename or "", dt_name)
-                if parsed_issue is None and ai.get("issue_date"):
-                    try:
-                        parsed_issue = date.fromisoformat(ai["issue_date"])
-                    except ValueError:
-                        pass
-                if parsed_expiry is None and ai.get("expiry_date"):
-                    try:
-                        parsed_expiry = date.fromisoformat(ai["expiry_date"])
-                    except ValueError:
-                        pass
-            except Exception:
-                pass
-            await file.seek(0)
-
-    # validity_days as last-resort fallback only when neither user nor AI provided expiry
-    if parsed_expiry is None and doc.document_type and doc.document_type.effective_validity_days and parsed_issue:
-        parsed_expiry = parsed_issue + timedelta(days=doc.document_type.effective_validity_days)
-
-    # --- Fail-Fast: block already-expired documents ---
-    if parsed_expiry is not None and parsed_expiry < date.today():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                f"Bloqueo del sistema: El documento ya se encuentra vencido. "
-                f"Fecha de caducidad calculada: {parsed_expiry.strftime('%d-%m-%Y')}. "
-                f"No se permite su ingreso."
-            ),
-        )
+    dt_name = doc.document_type.name if doc.document_type else None
+    effective_vd = doc.document_type.effective_validity_days if doc.document_type else None
+    parsed_issue, parsed_expiry = await resolve_document_dates(
+        issue_date, expiry_date, file, dt_name, effective_vd
+    )
 
     if file is not None:
         # Replace the stored file and reset status to pending review
