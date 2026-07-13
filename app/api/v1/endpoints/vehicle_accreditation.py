@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.permissions import Module, PermissionLevel, require_module
 from app.db.session import get_db
 from app.schemas.vehicle_profile import VehicleFullProfile, VehicleGlobalStatus
 from app.services.vehicle_accreditation import (
@@ -8,7 +9,11 @@ from app.services.vehicle_accreditation import (
     get_vehicles_global_status,
 )
 
-router = APIRouter(prefix="/vehicle-accreditation", tags=["vehicle-accreditation"])
+router = APIRouter(
+    prefix="/vehicle-accreditation",
+    tags=["vehicle-accreditation"],
+    dependencies=[Depends(require_module(Module.vehiculos, PermissionLevel.read))],
+)
 
 
 @router.get("/global-status", response_model=list[VehicleGlobalStatus])

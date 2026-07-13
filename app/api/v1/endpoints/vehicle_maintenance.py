@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.permissions import Module, PermissionLevel, require_module
 from app.db.session import get_db
 from app.models.vehicle_maintenance import VehicleMaintenance
 from app.schemas.vehicle_maintenance import (
@@ -12,8 +13,11 @@ from app.schemas.vehicle_maintenance import (
 
 router = APIRouter(prefix="/vehicle-maintenance", tags=["vehicle-maintenance"])
 
+_R = [Depends(require_module(Module.vehiculos, PermissionLevel.read))]
+_W = [Depends(require_module(Module.vehiculos, PermissionLevel.write))]
 
-@router.get("/", response_model=list[VehicleMaintenanceRead])
+
+@router.get("/", response_model=list[VehicleMaintenanceRead], dependencies=_R)
 async def list_vehicle_maintenance(
     vehicle_id: int,
     db: AsyncSession = Depends(get_db),
@@ -26,7 +30,7 @@ async def list_vehicle_maintenance(
     return result.scalars().all()
 
 
-@router.post("/", response_model=VehicleMaintenanceRead, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=VehicleMaintenanceRead, status_code=status.HTTP_201_CREATED, dependencies=_W)
 async def create_vehicle_maintenance(
     payload: VehicleMaintenanceCreate, db: AsyncSession = Depends(get_db)
 ):
@@ -37,7 +41,7 @@ async def create_vehicle_maintenance(
     return maint
 
 
-@router.get("/{maint_id}", response_model=VehicleMaintenanceRead)
+@router.get("/{maint_id}", response_model=VehicleMaintenanceRead, dependencies=_R)
 async def get_vehicle_maintenance(maint_id: int, db: AsyncSession = Depends(get_db)):
     maint = await db.get(VehicleMaintenance, maint_id)
     if not maint:
@@ -45,7 +49,7 @@ async def get_vehicle_maintenance(maint_id: int, db: AsyncSession = Depends(get_
     return maint
 
 
-@router.patch("/{maint_id}", response_model=VehicleMaintenanceRead)
+@router.patch("/{maint_id}", response_model=VehicleMaintenanceRead, dependencies=_W)
 async def update_vehicle_maintenance(
     maint_id: int, payload: VehicleMaintenanceUpdate, db: AsyncSession = Depends(get_db)
 ):
@@ -59,7 +63,7 @@ async def update_vehicle_maintenance(
     return maint
 
 
-@router.delete("/{maint_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{maint_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=_W)
 async def delete_vehicle_maintenance(maint_id: int, db: AsyncSession = Depends(get_db)):
     maint = await db.get(VehicleMaintenance, maint_id)
     if not maint:

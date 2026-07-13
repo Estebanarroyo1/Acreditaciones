@@ -47,5 +47,12 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     OPENAI_MODEL: str = "gpt-4o"
 
+    # Microsoft Entra ID (M365) authentication
+    ENTRA_TENANT_ID: str = ""
+    ENTRA_CLIENT_ID: str = ""
+    ADMIN_EMAILS: str = ""  # comma-separated list of emails that get is_admin=True on first login
+    # ⚠️ NEVER set AUTH_DISABLED=True in production — it bypasses all authentication
+    AUTH_DISABLED: bool = False
+
 
 settings = Settings()

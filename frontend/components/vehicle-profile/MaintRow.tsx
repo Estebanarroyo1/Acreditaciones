@@ -4,9 +4,11 @@ import { useState } from 'react'
 import type { VehicleMaintenanceCheck } from '@/lib/types'
 import { TrafficLightBadge } from '../TrafficLightBadge'
 import { MeterUpdateForm } from './MeterUpdateForm'
+import { usePermissions } from '@/lib/permissions'
 
 export function MaintRow({ check, onRefresh }: { check: VehicleMaintenanceCheck; onRefresh: () => void }) {
   const [showMeter, setShowMeter] = useState(false)
+  const { canWrite } = usePermissions()
 
   const unitLabel = check.measurement_unit === 'km' ? 'KM' : 'h'
   const remaining = check.usage_remaining ?? 0
@@ -39,14 +41,16 @@ export function MaintRow({ check, onRefresh }: { check: VehicleMaintenanceCheck;
           <TrafficLightBadge status={maintStatus} variant="pill" />
         </td>
         <td className="px-3 py-1 text-right">
-          <button
-            onClick={() => setShowMeter((v) => !v)}
-            className={`px-2 py-0.5 text-[11px] font-semibold rounded-none transition-colors ${
-              showMeter ? 'bg-slate-200 text-slate-600' : 'border border-slate-300 text-slate-700 hover:bg-slate-100'
-            }`}
-          >
-            {showMeter ? 'Cancelar' : `Actualizar ${unitLabel}`}
-          </button>
+          {canWrite('vehiculos') && (
+            <button
+              onClick={() => setShowMeter((v) => !v)}
+              className={`px-2 py-0.5 text-[11px] font-semibold rounded-none transition-colors ${
+                showMeter ? 'bg-slate-200 text-slate-600' : 'border border-slate-300 text-slate-700 hover:bg-slate-100'
+              }`}
+            >
+              {showMeter ? 'Cancelar' : `Actualizar ${unitLabel}`}
+            </button>
+          )}
         </td>
       </tr>
       {showMeter && (

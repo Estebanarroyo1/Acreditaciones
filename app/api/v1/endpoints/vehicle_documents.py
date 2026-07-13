@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.permissions import Module, PermissionLevel, require_module
 from app.db.session import get_db
 from app.models.associations import DocumentStatus
 from app.models.vehicle_document import VehicleDocument
@@ -16,8 +17,11 @@ from app.services.storage import save_vehicle_upload
 
 router = APIRouter(prefix="/vehicle-documents", tags=["vehicle-documents"])
 
+_R = [Depends(require_module(Module.vehiculos, PermissionLevel.read))]
+_W = [Depends(require_module(Module.vehiculos, PermissionLevel.write))]
 
-@router.post("/ai-scan")
+
+@router.post("/ai-scan", dependencies=_W)
 async def ai_scan_vehicle_document(file: UploadFile = File(...)):
     """Preview scan: extract dates and doc type without blocking validation."""
     from app.core.config import settings
@@ -43,7 +47,7 @@ async def ai_scan_vehicle_document(file: UploadFile = File(...)):
     }
 
 
-@router.post("/", response_model=VehicleDocumentRead, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=VehicleDocumentRead, status_code=status.HTTP_201_CREATED, dependencies=_W)
 async def upload_vehicle_document(
     vehicle_id: int = Form(...),
     vehicle_document_type_id: int = Form(...),
@@ -153,7 +157,7 @@ async def upload_vehicle_document(
     return refreshed.scalar_one()
 
 
-@router.get("/{doc_id}/view")
+@router.get("/{doc_id}/view", dependencies=_R)
 async def view_vehicle_document(doc_id: int, db: AsyncSession = Depends(get_db)):
     doc = await db.get(VehicleDocument, doc_id)
     if not doc:
@@ -168,7 +172,7 @@ async def view_vehicle_document(doc_id: int, db: AsyncSession = Depends(get_db))
     )
 
 
-@router.get("/{doc_id}/download")
+@router.get("/{doc_id}/download", dependencies=_R)
 async def download_vehicle_document(doc_id: int, db: AsyncSession = Depends(get_db)):
     doc = await db.get(VehicleDocument, doc_id)
     if not doc:
@@ -183,7 +187,7 @@ async def download_vehicle_document(doc_id: int, db: AsyncSession = Depends(get_
     )
 
 
-@router.get("/{doc_id}", response_model=VehicleDocumentRead)
+@router.get("/{doc_id}", response_model=VehicleDocumentRead, dependencies=_R)
 async def get_vehicle_document(doc_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(VehicleDocument)
@@ -196,7 +200,7 @@ async def get_vehicle_document(doc_id: int, db: AsyncSession = Depends(get_db)):
     return doc
 
 
-@router.patch("/{doc_id}", response_model=VehicleDocumentRead)
+@router.patch("/{doc_id}", response_model=VehicleDocumentRead, dependencies=_W)
 async def edit_vehicle_document(
     doc_id: int,
     issue_date: str | None = Form(None, description="Fecha emisión YYYY-MM-DD"),
@@ -314,7 +318,7 @@ async def edit_vehicle_document(
     return refreshed.scalar_one()
 
 
-@router.patch("/{doc_id}/review", response_model=VehicleDocumentRead)
+@router.patch("/{doc_id}/review", response_model=VehicleDocumentRead, dependencies=_W)
 async def review_vehicle_document(
     doc_id: int, payload: VehicleDocumentReview, db: AsyncSession = Depends(get_db)
 ):

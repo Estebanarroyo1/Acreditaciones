@@ -5,6 +5,7 @@ import Link from 'next/link'
 import type { DocumentType, Project, ProjectRequirement } from '@/lib/types'
 import { api } from '@/lib/api'
 import { ProjectReqsEditor } from './ProjectReqsEditor'
+import { usePermissions } from '@/lib/permissions'
 
 export function ProjectsSection({
   projects,
@@ -26,6 +27,7 @@ export function ProjectsSection({
   const [expandedId, setExpandedId] = useState<number | null>(null)
   const [projectReqs, setProjectReqs] = useState<Record<number, ProjectRequirement[]>>({})
   const [loadingReqs, setLoadingReqs] = useState<number | null>(null)
+  const { canWrite } = usePermissions()
 
   const loadReqs = useCallback(async (projectId: number) => {
     setLoadingReqs(projectId)
@@ -88,15 +90,17 @@ export function ProjectsSection({
             Crea proyectos y define sus requisitos específicos (además de los requisitos globales).
           </p>
         </div>
-        <button
-          onClick={() => setShowCreate((v) => !v)}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-xl hover:bg-blue-700 transition-colors"
-        >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-          </svg>
-          Nuevo Proyecto
-        </button>
+        {canWrite('configuracion') && (
+          <button
+            onClick={() => setShowCreate((v) => !v)}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-xl hover:bg-blue-700 transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+            </svg>
+            Nuevo Proyecto
+          </button>
+        )}
       </div>
 
       {showCreate && (

@@ -3,6 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.permissions import Module, PermissionLevel, require_module
 from app.db.session import get_db
 from app.models.vehicle_document_type import VehicleDocumentType
 from app.schemas.vehicle_document_type import (
@@ -13,8 +14,11 @@ from app.schemas.vehicle_document_type import (
 
 router = APIRouter(prefix="/vehicle-document-types", tags=["vehicle-document-types"])
 
+_R = [Depends(require_module(Module.vehiculos, PermissionLevel.read))]
+_W = [Depends(require_module(Module.vehiculos, PermissionLevel.write))]
 
-@router.get("/", response_model=list[VehicleDocumentTypeRead])
+
+@router.get("/", response_model=list[VehicleDocumentTypeRead], dependencies=_R)
 async def list_vehicle_document_types(
     active_only: bool = True,
     db: AsyncSession = Depends(get_db),
@@ -26,7 +30,7 @@ async def list_vehicle_document_types(
     return result.scalars().all()
 
 
-@router.post("/", response_model=VehicleDocumentTypeRead, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=VehicleDocumentTypeRead, status_code=status.HTTP_201_CREATED, dependencies=_W)
 async def create_vehicle_document_type(
     payload: VehicleDocumentTypeCreate, db: AsyncSession = Depends(get_db)
 ):
@@ -44,7 +48,7 @@ async def create_vehicle_document_type(
     return vdt
 
 
-@router.patch("/{vdt_id}", response_model=VehicleDocumentTypeRead)
+@router.patch("/{vdt_id}", response_model=VehicleDocumentTypeRead, dependencies=_W)
 async def update_vehicle_document_type(
     vdt_id: int, payload: VehicleDocumentTypeUpdate, db: AsyncSession = Depends(get_db)
 ):
@@ -58,7 +62,7 @@ async def update_vehicle_document_type(
     return vdt
 
 
-@router.delete("/{vdt_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{vdt_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=_W)
 async def delete_vehicle_document_type(
     vdt_id: int, db: AsyncSession = Depends(get_db)
 ):

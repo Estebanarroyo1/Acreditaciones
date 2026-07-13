@@ -129,17 +129,6 @@ export function AlertSettingsPanel() {
   const [dtLoading, setDtLoading]   = useState(true)
   const [search, setSearch]         = useState('')
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    try {
-      const s = await api.getAlertSettings()
-      setPct(s.global_alert_percentage)
-      setInput(String(s.global_alert_percentage))
-    } catch { /* ignore */ } finally {
-      setLoading(false)
-    }
-  }, [])
-
   const loadDocTypes = useCallback(async () => {
     setDtLoading(true)
     try {
@@ -150,7 +139,16 @@ export function AlertSettingsPanel() {
     }
   }, [])
 
-  useEffect(() => { load(); loadDocTypes() }, [load, loadDocTypes])
+  useEffect(() => {
+    Promise.all([api.getAlertSettings(), api.getDocumentTypes()])
+      .then(([s, dts]) => {
+        setPct(s.global_alert_percentage)
+        setInput(String(s.global_alert_percentage))
+        setDocTypes(dts.filter((d) => d.is_active))
+      })
+      .catch(() => { /* ignore */ })
+      .finally(() => { setLoading(false); setDtLoading(false) })
+  }, [])
 
   const apply = (value: number) => {
     setPct(value)
@@ -375,7 +373,7 @@ export function AlertSettingsPanel() {
                 {filtered(withOverride).length === 0 && filtered(withoutOverride).length === 0 && (
                   <tr>
                     <td colSpan={4} className="py-8 text-center text-xs text-slate-400">
-                      Sin resultados para "{search}"
+                      Sin resultados para &ldquo;{search}&rdquo;
                     </td>
                   </tr>
                 )}

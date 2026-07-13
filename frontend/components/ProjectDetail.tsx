@@ -520,10 +520,25 @@ export function ProjectDetail({ projectId }: { projectId: number }) {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [deleting, setDeleting] = useState(false)
 
-  const loadData = useCallback(async () => {
+  useEffect(() => {
+    Promise.all([
+      api.getProjects().then((ps) => ps.find((p) => p.id === projectId) ?? null),
+      api.getProjectRequirements(projectId),
+      api.getProjectWorkers(projectId),
+    ])
+      .then(([proj, reqs, workers]) => {
+        setProject(proj)
+        setRequirements(reqs)
+        setAssignedWorkers(workers)
+      })
+      .catch(e => setError(e instanceof Error ? e.message : 'Error al cargar el proyecto'))
+      .finally(() => setLoading(false))
+  }, [projectId])
+
+  const loadData = async () => {
+    setLoading(true)
     try {
       const [proj, reqs, workers] = await Promise.all([
-        // Projects list → find this one (no single-project endpoint exposed yet)
         api.getProjects().then((ps) => ps.find((p) => p.id === projectId) ?? null),
         api.getProjectRequirements(projectId),
         api.getProjectWorkers(projectId),
@@ -536,9 +551,7 @@ export function ProjectDetail({ projectId }: { projectId: number }) {
     } finally {
       setLoading(false)
     }
-  }, [projectId])
-
-  useEffect(() => { loadData() }, [loadData])
+  }
 
   const refreshWorkers = useCallback(async () => {
     try {

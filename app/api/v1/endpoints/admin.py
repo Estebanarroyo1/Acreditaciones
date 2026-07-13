@@ -2,10 +2,16 @@
 Admin-only endpoints — not meant for production exposure.
 Useful for testing the notification job without waiting for the cron trigger.
 """
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel
 
-router = APIRouter(prefix="/admin", tags=["admin"])
+from app.core.permissions import require_admin
+
+router = APIRouter(
+    prefix="/admin",
+    tags=["admin"],
+    dependencies=[Depends(require_admin)],
+)
 
 
 class JobResult(BaseModel):

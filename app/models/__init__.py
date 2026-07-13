@@ -14,6 +14,7 @@ from app.models.vehicle import Vehicle
 from app.models.vehicle_document_type import VehicleDocumentType
 from app.models.vehicle_document import VehicleDocument
 from app.models.vehicle_maintenance import VehicleMaintenance, MeasurementUnit
+from app.models.user import User, ModulePermission
 
 __all__ = [
     "Base",
@@ -32,4 +33,6 @@ __all__ = [
     "VehicleDocument",
     "VehicleMaintenance",
     "MeasurementUnit",
+    "User",
+    "ModulePermission",
 ]

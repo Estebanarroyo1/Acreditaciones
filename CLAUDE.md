@@ -107,6 +107,47 @@ Cascada de porcentaje en tres niveles:
 
 `alert_days = total_life_days * pct / 100`. Documento entra en YELLOW cuando `days_remaining <= alert_days`.
 
+## Autenticación — Microsoft Entra ID
+
+### Archivos clave
+| Archivo | Función |
+|---------|---------|
+| `app/core/auth.py` | Dependencia `get_current_user` — valida JWT, auto-provisiona usuario |
+| `app/core/permissions.py` | Enums `Module`/`PermissionLevel`, deps `require_admin`/`require_module` |
+| `app/models/user.py` | Modelos `User` y `ModulePermission` (SQLAlchemy 2.0) |
+| `app/schemas/auth.py` | Schemas Pydantic para respuestas de auth |
+| `app/api/v1/endpoints/auth.py` | Endpoints `/auth/me`, `/admin/users`, `/admin/users/{id}`, `/admin/users/{id}/permissions` |
+
+### Módulos disponibles
+`trabajadores` · `vehiculos` · `gastos` · `configuracion` · `reportes`
+
+### Flujo de autenticación
+1. Cliente envía `Authorization: Bearer <token>` (JWT de Entra ID)
+2. `get_current_user` valida firma contra JWKS de Microsoft y verifica `aud`/`iss`/`exp`
+3. Si el OID no existe en DB → auto-provisiona usuario; si el email está en `ADMIN_EMAILS` → `is_admin=True`
+4. Actualiza `last_login_at` en cada request válido
+5. Si `is_active=False` → 403
+
+### Variables de entorno requeridas
+```
+ENTRA_TENANT_ID=    # GUID del tenant de Azure
+ENTRA_CLIENT_ID=    # GUID del app registration
+ADMIN_EMAILS=       # comma-separated; reciben is_admin=True al primer login
+AUTH_DISABLED=false # ⚠️ NUNCA true en producción
+```
+
+### Uso en endpoints futuros
+```python
+# Solo autenticado:
+current_user: User = Depends(get_current_user)
+
+# Solo admins:
+_: User = Depends(require_admin)
+
+# Módulo específico (write implica read):
+_: User = Depends(require_module(Module.trabajadores, PermissionLevel.write))
+```
+
 ## Reglas para futuras sesiones
 
 1. **Migraciones:** Nunca editar archivos en `migrations/versions/` ya existentes. Siempre crear una nueva con `alembic revision --autogenerate`.

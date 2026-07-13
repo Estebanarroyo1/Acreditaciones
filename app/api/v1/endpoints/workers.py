@@ -14,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.permissions import Module, PermissionLevel, require_module
 from app.db.session import get_db
 from app.models.worker import Worker, WorkLocation
 from app.models.associations import DocumentStatus, WorkerDocument, WorkerProject
@@ -30,6 +31,9 @@ from app.services.workers import process_bulk_upload
 
 router = APIRouter(prefix="/workers", tags=["workers"])
 
+_R = [Depends(require_module(Module.trabajadores, PermissionLevel.read))]
+_W = [Depends(require_module(Module.trabajadores, PermissionLevel.write))]
+
 
 def _sanitize_filename(name: str) -> str:
     """Reemplaza cualquier caracter fuera de [A-Za-z0-9_-] por '_'."""
@@ -37,7 +41,7 @@ def _sanitize_filename(name: str) -> str:
     return cleaned.strip("_") or "archivo"
 
 
-@router.get("/", response_model=list[WorkerRead])
+@router.get("/", response_model=list[WorkerRead], dependencies=_R)
 async def list_workers(
     status: Literal["active", "archived"] = Query("active"),
     location: Literal["planta", "obra"] | None = Query(None),
@@ -58,7 +62,7 @@ async def list_workers(
     return out
 
 
-@router.post("/", response_model=WorkerRead, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=WorkerRead, status_code=status.HTTP_201_CREATED, dependencies=_W)
 async def create_worker(payload: WorkerCreate, db: AsyncSession = Depends(get_db)):
     worker = Worker(**payload.model_dump())
     db.add(worker)
@@ -74,7 +78,7 @@ async def create_worker(payload: WorkerCreate, db: AsyncSession = Depends(get_db
     return worker
 
 
-@router.get("/{worker_id}/full-profile", response_model=WorkerFullProfile)
+@router.get("/{worker_id}/full-profile", response_model=WorkerFullProfile, dependencies=_R)
 async def get_worker_full_profile_endpoint(
     worker_id: int, db: AsyncSession = Depends(get_db)
 ):
@@ -87,6 +91,7 @@ async def get_worker_full_profile_endpoint(
 @router.get(
     "/{worker_id}/documents/download-zip",
     summary="Descargar documentos del trabajador como ZIP",
+    dependencies=_R,
 )
 async def download_worker_documents_zip(
     worker_id: int,
@@ -161,7 +166,7 @@ async def download_worker_documents_zip(
     )
 
 
-@router.get("/bulk-template", summary="Descargar plantilla Excel para carga masiva")
+@router.get("/bulk-template", summary="Descargar plantilla Excel para carga masiva", dependencies=_R)
 async def download_bulk_template():
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -255,6 +260,7 @@ async def download_bulk_template():
     "/bulk-upload",
     response_model=BulkUploadResult,
     summary="Carga masiva de trabajadores desde Excel (.xlsx)",
+    dependencies=_W,
 )
 async def bulk_upload_workers(
     file: UploadFile = File(...),
@@ -269,7 +275,7 @@ async def bulk_upload_workers(
     return await process_bulk_upload(content, db)
 
 
-@router.get("/{worker_id}", response_model=WorkerRead)
+@router.get("/{worker_id}", response_model=WorkerRead, dependencies=_R)
 async def get_worker(worker_id: int, db: AsyncSession = Depends(get_db)):
     worker = await db.get(Worker, worker_id)
     if not worker:
@@ -277,7 +283,7 @@ async def get_worker(worker_id: int, db: AsyncSession = Depends(get_db)):
     return worker
 
 
-@router.patch("/{worker_id}", response_model=WorkerRead)
+@router.patch("/{worker_id}", response_model=WorkerRead, dependencies=_W)
 async def update_worker(
     worker_id: int, payload: WorkerUpdate, db: AsyncSession = Depends(get_db)
 ):
@@ -295,6 +301,7 @@ async def update_worker(
     "/{worker_id}/archive",
     response_model=WorkerRead,
     summary="Archivar trabajador (soft delete) — sus documentos permanecen intactos",
+    dependencies=_W,
 )
 async def archive_worker(worker_id: int, db: AsyncSession = Depends(get_db)):
     worker = await db.get(Worker, worker_id)
@@ -310,6 +317,7 @@ async def archive_worker(worker_id: int, db: AsyncSession = Depends(get_db)):
     "/{worker_id}/restore",
     response_model=WorkerRead,
     summary="Restaurar trabajador archivado",
+    dependencies=_W,
 )
 async def restore_worker(worker_id: int, db: AsyncSession = Depends(get_db)):
     worker = await db.get(Worker, worker_id)
@@ -325,6 +333,7 @@ async def restore_worker(worker_id: int, db: AsyncSession = Depends(get_db)):
     "/{worker_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Eliminar trabajador permanentemente (borra documentos y asignaciones)",
+    dependencies=_W,
 )
 async def delete_worker(worker_id: int, db: AsyncSession = Depends(get_db)):
     worker = await db.get(Worker, worker_id)
@@ -339,6 +348,7 @@ async def delete_worker(worker_id: int, db: AsyncSession = Depends(get_db)):
     response_model=WorkerProjectRead,
     status_code=status.HTTP_201_CREATED,
     summary="Asignar trabajador a un proyecto",
+    dependencies=_W,
 )
 async def assign_worker_to_project(
     worker_id: int,
@@ -398,6 +408,7 @@ async def assign_worker_to_project(
     "/{worker_id}/projects/{project_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Desasignar trabajador de un proyecto",
+    dependencies=_W,
 )
 async def unassign_worker_from_project(
     worker_id: int,

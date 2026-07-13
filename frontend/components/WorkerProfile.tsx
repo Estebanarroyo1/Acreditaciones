@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import type { WorkerFullProfile } from '@/lib/types'
@@ -13,6 +13,7 @@ import { DownloadZipButton } from './worker-profile/DownloadZipButton'
 import { ReqRow } from './worker-profile/ReqRow'
 import { ProjectCard } from './worker-profile/ProjectCard'
 import { ArchivedProjectCard } from './worker-profile/ArchivedProjectCard'
+import { usePermissions } from '@/lib/permissions'
 
 export function WorkerProfile({ workerId }: { workerId: number }) {
   const router = useRouter()
@@ -26,6 +27,7 @@ export function WorkerProfile({ workerId }: { workerId: number }) {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [activeTab, setActiveTab] = useState<'docs' | 'achs'>('docs')
+  const { canWrite } = usePermissions()
 
   const handleArchive = async () => {
     setArchiving(true)
@@ -61,7 +63,14 @@ export function WorkerProfile({ workerId }: { workerId: number }) {
     setPreviewDocId(docId)
   }
 
-  const loadProfile = useCallback(async () => {
+  useEffect(() => {
+    api.getWorkerFullProfile(workerId)
+      .then(data => setProfile(data))
+      .catch(e => setError(e instanceof Error ? e.message : 'Error al cargar el perfil'))
+      .finally(() => setLoading(false))
+  }, [workerId])
+
+  const loadProfile = async () => {
     try {
       const data = await api.getWorkerFullProfile(workerId)
       setProfile(data)
@@ -70,9 +79,7 @@ export function WorkerProfile({ workerId }: { workerId: number }) {
     } finally {
       setLoading(false)
     }
-  }, [workerId])
-
-  useEffect(() => { loadProfile() }, [loadProfile])
+  }
 
   if (loading) {
     return (
@@ -172,41 +179,43 @@ export function WorkerProfile({ workerId }: { workerId: number }) {
             {profile.global_traffic_light && (
               <TrafficLightBadge status={profile.global_traffic_light} size="lg" showLabel />
             )}
-            <div className="flex items-center gap-2 shrink-0">
-              {profile.is_active ? (
+            {canWrite('trabajadores') && (
+              <div className="flex items-center gap-2 shrink-0">
+                {profile.is_active ? (
+                  <button
+                    onClick={() => setShowArchiveDialog(true)}
+                    title="Archivar trabajador"
+                    className="flex items-center gap-2 px-3 py-2 text-xs font-semibold rounded-sm bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 transition-colors"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" />
+                    </svg>
+                    Archivar
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleRestore}
+                    title="Restaurar trabajador"
+                    className="flex items-center gap-2 px-3 py-2 text-xs font-semibold rounded-sm bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 transition-colors"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3" />
+                    </svg>
+                    Restaurar
+                  </button>
+                )}
                 <button
-                  onClick={() => setShowArchiveDialog(true)}
-                  title="Archivar trabajador"
-                  className="flex items-center gap-2 px-3 py-2 text-xs font-semibold rounded-sm bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 transition-colors"
+                  onClick={() => setShowDeleteDialog(true)}
+                  title="Eliminar trabajador permanentemente"
+                  className="flex items-center gap-2 px-3 py-2 text-xs font-semibold rounded-sm bg-white border border-slate-300 text-slate-700 hover:bg-red-50 hover:border-red-300 hover:text-red-700 transition-colors"
                 >
                   <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
                   </svg>
-                  Archivar
+                  Eliminar
                 </button>
-              ) : (
-                <button
-                  onClick={handleRestore}
-                  title="Restaurar trabajador"
-                  className="flex items-center gap-2 px-3 py-2 text-xs font-semibold rounded-sm bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 transition-colors"
-                >
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3" />
-                  </svg>
-                  Restaurar
-                </button>
-              )}
-              <button
-                onClick={() => setShowDeleteDialog(true)}
-                title="Eliminar trabajador permanentemente"
-                className="flex items-center gap-2 px-3 py-2 text-xs font-semibold rounded-sm bg-white border border-slate-300 text-slate-700 hover:bg-red-50 hover:border-red-300 hover:text-red-700 transition-colors"
-              >
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
-                </svg>
-                Eliminar
-              </button>
-            </div>
+              </div>
+            )}
           </div>
 
           {/* Stats strip */}

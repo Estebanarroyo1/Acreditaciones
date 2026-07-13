@@ -6,6 +6,7 @@ import { api } from '@/lib/api'
 import { DocTypeRow } from './DocTypeRow'
 import { EditDocTypeModal } from './EditDocTypeModal'
 import { DeleteDocTypeModal } from './DeleteDocTypeModal'
+import { usePermissions } from '@/lib/permissions'
 
 function TableHeader({ label, count, accent }: { label: string; count: number; accent: string }) {
   return (
@@ -42,6 +43,7 @@ export function GlobalReqsSection({
 
   const [editingDoc, setEditingDoc] = useState<DocumentType | null>(null)
   const [deletingDoc, setDeletingDoc] = useState<DocumentType | null>(null)
+  const { canWrite } = usePermissions()
 
   const resetForm = () => {
     setName(''); setCategoryId(''); setValidityDays(''); setAlertPct('')
@@ -93,15 +95,17 @@ export function GlobalReqsSection({
             Define y clasifica los documentos que el sistema gestionará para acreditación de personal.
           </p>
         </div>
-        <button
-          onClick={() => { resetForm(); setShowForm((v) => !v) }}
-          className="shrink-0 flex items-center gap-2 px-4 py-2 bg-[#003f7a] text-white text-sm font-semibold rounded-sm hover:bg-[#005096] transition-colors"
-        >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-          </svg>
-          + Nuevo Tipo de Documento
-        </button>
+        {canWrite('configuracion') && (
+          <button
+            onClick={() => { resetForm(); setShowForm((v) => !v) }}
+            className="shrink-0 flex items-center gap-2 px-4 py-2 bg-[#003f7a] text-white text-sm font-semibold rounded-sm hover:bg-[#005096] transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+            </svg>
+            + Nuevo Tipo de Documento
+          </button>
+        )}
       </div>
 
       {showForm && (

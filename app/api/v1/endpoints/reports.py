@@ -6,13 +6,18 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.permissions import Module, PermissionLevel, require_module
 from app.db.session import get_db
 from app.models.associations import DocumentStatus, WorkerDocument
 from app.models.document_type import DocumentType
 from app.models.project import Project
 from app.models.worker import Worker
 
-router = APIRouter(prefix="/reports", tags=["reports"])
+router = APIRouter(
+    prefix="/reports",
+    tags=["reports"],
+    dependencies=[Depends(require_module(Module.reportes, PermissionLevel.read))],
+)
 
 _ACTIVE_STATUSES = {DocumentStatus.APPROVED, DocumentStatus.PENDING}
 

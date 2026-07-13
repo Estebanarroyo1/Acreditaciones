@@ -122,7 +122,7 @@ function EditForm({
         </div>
         {file && (
           <p className="mt-1 text-[10px] text-amber-700">
-            El estado del documento volverá a "En revisión" al subir un nuevo archivo.
+            El estado del documento volverá a &ldquo;En revisión&rdquo; al subir un nuevo archivo.
           </p>
         )}
       </div>

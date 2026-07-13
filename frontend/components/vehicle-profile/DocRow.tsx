@@ -5,6 +5,7 @@ import type { VehicleDocumentCheck, VehicleDocumentType } from '@/lib/types'
 import { api } from '@/lib/api'
 import { TrafficLightBadge } from '../TrafficLightBadge'
 import { DocForm } from './DocForm'
+import { usePermissions } from '@/lib/permissions'
 
 export function DocRow({ check, vehicleId, docTypes, onRefresh }: {
   check: VehicleDocumentCheck
@@ -13,6 +14,7 @@ export function DocRow({ check, vehicleId, docTypes, onRefresh }: {
   onRefresh: () => void
 }) {
   const [open, setOpen] = useState(false)
+  const { canWrite } = usePermissions()
 
   const expiryCell = () => {
     if (check.check_status === 'missing' || !check.expiry_date)
@@ -70,16 +72,18 @@ export function DocRow({ check, vehicleId, docTypes, onRefresh }: {
                 Ver
               </a>
             )}
-            <button
-              onClick={() => setOpen((v) => !v)}
-              className={`px-2 py-0.5 text-[11px] font-semibold rounded-none transition-colors ${
-                open
-                  ? 'bg-slate-200 text-slate-600'
-                  : 'bg-[#003f7a] text-white hover:bg-[#005096]'
-              }`}
-            >
-              {open ? 'Cancelar' : (check.vehicle_document_id ? 'Editar' : 'Subir')}
-            </button>
+            {canWrite('vehiculos') && (
+              <button
+                onClick={() => setOpen((v) => !v)}
+                className={`px-2 py-0.5 text-[11px] font-semibold rounded-none transition-colors ${
+                  open
+                    ? 'bg-slate-200 text-slate-600'
+                    : 'bg-[#003f7a] text-white hover:bg-[#005096]'
+                }`}
+              >
+                {open ? 'Cancelar' : (check.vehicle_document_id ? 'Editar' : 'Subir')}
+              </button>
+            )}
           </div>
         </td>
       </tr>

@@ -381,3 +381,29 @@ export interface BulkUploadResult {
   created: number
   errors: BulkUploadError[]
 }
+
+// ── Admin users ───────────────────────────────────────────────────────────
+export interface AdminPermission {
+  module: string
+  level: string
+}
+
+export interface AdminUser {
+  id: number
+  email: string
+  full_name: string | null
+  is_admin: boolean
+  is_active: boolean
+  last_login_at: string | null
+  permissions: AdminPermission[]
+}
+
+export interface AdminUserPatch {
+  is_active?: boolean
+  is_admin?: boolean
+}
+
+export interface AdminPermissionItem {
+  module: string
+  level: string
+}

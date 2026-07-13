@@ -8,6 +8,7 @@ import { ROW_LEFT, CATEGORY_LABELS } from './utils'
 import { UploadForm } from './UploadForm'
 import { EditDocForm } from './EditDocForm'
 import { ReviewForm } from './ReviewForm'
+import { usePermissions } from '@/lib/permissions'
 
 export function ReqRow({
   dtId,
@@ -48,6 +49,7 @@ export function ReqRow({
   const needsUpload = checkStatus !== 'ok' && checkStatus !== 'pending_review'
   const hasDoc = !!workerDocumentId
   const isPendingReview = checkStatus === 'pending_review'
+  const { canWrite } = usePermissions()
 
   const handleArchive = async () => {
     if (!workerDocumentId) return
@@ -109,7 +111,7 @@ export function ReqRow({
               </svg>
             </button>
           )}
-          {hasDoc && (
+          {hasDoc && canWrite('trabajadores') && (
             <button
               onClick={() => { setShowEdit((v) => !v); setShowForm(false); setShowReview(false) }}
               title="Editar fechas o reemplazar archivo"
@@ -120,7 +122,7 @@ export function ReqRow({
               </svg>
             </button>
           )}
-          {isPendingReview && hasDoc && (
+          {isPendingReview && hasDoc && canWrite('trabajadores') && (
             <button
               onClick={() => { setShowReview((v) => !v); setShowEdit(false); setShowForm(false) }}
               title="Aprobar o rechazar documento"
@@ -136,7 +138,7 @@ export function ReqRow({
               Revisar
             </button>
           )}
-          {needsUpload && (isGlobal || projectIds.length > 0) && (
+          {needsUpload && (isGlobal || projectIds.length > 0) && canWrite('trabajadores') && (
             <button
               onClick={() => setShowForm((v) => !v)}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
@@ -147,7 +149,7 @@ export function ReqRow({
               {checkStatus === 'missing' ? 'Subir' : 'Actualizar'}
             </button>
           )}
-          {hasDoc && !archiveConfirm && (
+          {hasDoc && !archiveConfirm && canWrite('trabajadores') && (
             <button
               onClick={() => { setArchiveConfirm(true); setShowEdit(false); setShowForm(false); setShowReview(false) }}
               title="Archivar documento"

@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.permissions import Module, PermissionLevel, require_module
 from app.db.session import get_db
 from app.models.project import Project
 from app.models.worker import Worker, WorkLocation
@@ -11,7 +12,11 @@ from app.models.associations import WorkerProject
 from app.schemas.accreditation import AccreditationResponse, WorkerGlobalStatus
 from app.services.accreditation import evaluate_accreditation, get_workers_global_status
 
-router = APIRouter(prefix="/accreditation", tags=["accreditation"])
+router = APIRouter(
+    prefix="/accreditation",
+    tags=["accreditation"],
+    dependencies=[Depends(require_module(Module.trabajadores, PermissionLevel.read))],
+)
 
 
 @router.get(

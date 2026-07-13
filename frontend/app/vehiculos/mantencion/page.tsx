@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { api } from '@/lib/api'
 import type { VehicleGlobalStatus } from '@/lib/types'
@@ -11,19 +11,12 @@ export default function MantencionPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
-  const load = useCallback(async () => {
-    try {
-      setLoading(true)
-      const data = await api.getVehiclesGlobalStatus()
-      setVehicles(data)
-    } catch {
-      setError('No se pudo cargar el estado de mantención.')
-    } finally {
-      setLoading(false)
-    }
+  useEffect(() => {
+    api.getVehiclesGlobalStatus()
+      .then(data => setVehicles(data))
+      .catch(() => setError('No se pudo cargar el estado de mantención.'))
+      .finally(() => setLoading(false))
   }, [])
-
-  useEffect(() => { load() }, [load])
 
   return (
     <div className="p-6">

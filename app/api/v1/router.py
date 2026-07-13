@@ -15,6 +15,7 @@ from app.api.v1.endpoints import (
     vehicle_documents,
     vehicle_maintenance,
     vehicle_accreditation,
+    auth,
 )
 
 api_router = APIRouter()
@@ -32,3 +33,4 @@ api_router.include_router(vehicle_document_types.router)
 api_router.include_router(vehicle_documents.router)
 api_router.include_router(vehicle_maintenance.router)
 api_router.include_router(vehicle_accreditation.router)
+api_router.include_router(auth.router)

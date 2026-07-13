@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { ExpiringDocumentItem, Project, Worker, DocCheckStatus } from '@/lib/types'
 import { api } from '@/lib/api'
 import { TrafficLightBadge } from './TrafficLightBadge'
@@ -48,11 +48,18 @@ export function ReportsView() {
   const [items, setItems]             = useState<ExpiringDocumentItem[]>([])
   const [workers, setWorkers]         = useState<Worker[]>([])
   const [projects, setProjects]       = useState<Project[]>([])
-  const [loading, setLoading]         = useState(false)
+  const [loading, setLoading]         = useState(true)
   const [daysThreshold, setDaysThreshold] = useState(30)
   const [inputDays, setInputDays]     = useState('30')
   const [workerId, setWorkerId]       = useState<number | ''>('')
   const [projectId, setProjectId]     = useState<number | ''>('')
+
+  const [prevDepsKey, setPrevDepsKey] = useState(`${daysThreshold}|${workerId}|${projectId}`)
+  const depsKey = `${daysThreshold}|${workerId}|${projectId}`
+  if (depsKey !== prevDepsKey) {
+    setPrevDepsKey(depsKey)
+    setLoading(true)
+  }
 
   useEffect(() => {
     Promise.all([api.getWorkers(), api.getProjects()])
@@ -60,7 +67,18 @@ export function ReportsView() {
       .catch(() => {})
   }, [])
 
-  const fetchReport = useCallback(async () => {
+  useEffect(() => {
+    api.getExpiringDocuments({
+      days_threshold: daysThreshold,
+      worker_id:  workerId  !== '' ? workerId  : undefined,
+      project_id: projectId !== '' ? projectId : undefined,
+    })
+      .then(data => setItems(data))
+      .catch(() => setItems([]))
+      .finally(() => setLoading(false))
+  }, [daysThreshold, workerId, projectId])
+
+  const fetchReport = async () => {
     setLoading(true)
     try {
       const data = await api.getExpiringDocuments({
@@ -74,9 +92,7 @@ export function ReportsView() {
     } finally {
       setLoading(false)
     }
-  }, [daysThreshold, workerId, projectId])
-
-  useEffect(() => { fetchReport() }, [fetchReport])
+  }
 
   const handleDaysBlur = () => {
     const parsed = parseInt(inputDays, 10)

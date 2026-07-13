@@ -5,6 +5,7 @@ import Link from 'next/link'
 import type { CreateVehiclePayload, VehicleGlobalStatus } from '@/lib/types'
 import { api } from '@/lib/api'
 import { TrafficLightBadge } from './TrafficLightBadge'
+import { usePermissions } from '@/lib/permissions'
 
 // ── New vehicle form ───────────────────────────────────────────────────────
 function NewVehicleForm({ onCreated, onCancel }: { onCreated: () => void; onCancel: () => void }) {
@@ -91,6 +92,13 @@ export function FleetDirectory() {
   const [showNew, setShowNew] = useState(false)
   const [activeOnly, setActiveOnly] = useState(true)
   const [search, setSearch] = useState('')
+  const { canWrite } = usePermissions()
+
+  const [prevActiveOnly, setPrevActiveOnly] = useState(activeOnly)
+  if (activeOnly !== prevActiveOnly) {
+    setPrevActiveOnly(activeOnly)
+    setLoading(true)
+  }
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -104,7 +112,12 @@ export function FleetDirectory() {
     }
   }, [activeOnly])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    api.getVehiclesGlobalStatus(activeOnly)
+      .then(data => setFleet(data))
+      .catch(() => setFleet([]))
+      .finally(() => setLoading(false))
+  }, [activeOnly])
 
   const filtered = fleet.filter((v) => {
     if (!search) return true
@@ -149,15 +162,17 @@ export function FleetDirectory() {
           ))}
         </div>
 
-        <button
-          onClick={() => setShowNew((v) => !v)}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md bg-blue-600 text-white hover:bg-blue-700 border border-blue-700 transition-colors shadow-sm"
-        >
-          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-          </svg>
-          Nuevo vehículo
-        </button>
+        {canWrite('vehiculos') && (
+          <button
+            onClick={() => setShowNew((v) => !v)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md bg-blue-600 text-white hover:bg-blue-700 border border-blue-700 transition-colors shadow-sm"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+            </svg>
+            Nuevo vehículo
+          </button>
+        )}
       </div>
 
       {/* New vehicle form */}

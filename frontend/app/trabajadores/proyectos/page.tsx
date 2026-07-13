@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { api } from '@/lib/api'
 import type { Project } from '@/lib/types'
@@ -10,19 +10,12 @@ export default function ProyectosPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
-  const load = useCallback(async () => {
-    try {
-      setLoading(true)
-      const data = await api.getProjects()
-      setProjects(data)
-    } catch {
-      setError('No se pudo cargar la lista de proyectos.')
-    } finally {
-      setLoading(false)
-    }
+  useEffect(() => {
+    api.getProjects()
+      .then(data => setProjects(data))
+      .catch(() => setError('No se pudo cargar la lista de proyectos.'))
+      .finally(() => setLoading(false))
   }, [])
-
-  useEffect(() => { load() }, [load])
 
   return (
     <div className="p-6">

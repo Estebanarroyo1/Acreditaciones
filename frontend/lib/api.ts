@@ -1,5 +1,8 @@
 import type {
   AccreditationStatus,
+  AdminPermissionItem,
+  AdminUser,
+  AdminUserPatch,
   AlertSettings,
   BulkUploadResult,
   CreateDocumentCategoryPayload,
@@ -24,11 +27,24 @@ import type {
   WorkerFullProfile,
   WorkerGlobalStatus,
 } from './types'
+import { tokenStore } from './token-store'
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000/api/v1'
 
+function authHeaders(extra?: Record<string, string>): Record<string, string> {
+  const token = tokenStore.get()
+  return token ? { Authorization: `Bearer ${token}`, ...extra } : { ...extra }
+}
+
+function handle401(res: Response) {
+  if (res.status === 401 && typeof window !== 'undefined') {
+    window.location.href = '/login'
+  }
+}
+
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { cache: 'no-store' })
+  const res = await fetch(`${BASE}${path}`, { cache: 'no-store', headers: authHeaders() })
+  handle401(res)
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
   return res.json() as Promise<T>
 }
@@ -36,9 +52,10 @@ async function get<T>(path: string): Promise<T> {
 async function post<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(body),
   })
+  handle401(res)
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
     throw new Error(err?.detail ?? `${res.status} ${res.statusText}`)
@@ -49,9 +66,10 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 async function patch<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(body),
   })
+  handle401(res)
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
     throw new Error(err?.detail ?? `${res.status} ${res.statusText}`)
@@ -59,8 +77,23 @@ async function patch<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>
 }
 
+async function put<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'PUT',
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(body),
+  })
+  handle401(res)
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error((err as { detail?: string })?.detail ?? `${res.status} ${res.statusText}`)
+  }
+  return res.json() as Promise<T>
+}
+
 async function del(path: string): Promise<void> {
-  const res = await fetch(`${BASE}${path}`, { method: 'DELETE' })
+  const res = await fetch(`${BASE}${path}`, { method: 'DELETE', headers: authHeaders() })
+  handle401(res)
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
     throw new Error(err?.detail ?? `${res.status} ${res.statusText}`)
@@ -121,7 +154,7 @@ export const api = {
   updateDocumentType: (id: number, payload: Partial<CreateDocumentTypePayload & { is_active: boolean }>) =>
     patch<DocumentType>(`/document-types/${id}`, payload),
   deleteDocumentType: async (id: number): Promise<void> => {
-    const res = await fetch(`${BASE}/document-types/${id}`, { method: 'DELETE' })
+    const res = await fetch(`${BASE}/document-types/${id}`, { method: 'DELETE', headers: authHeaders() })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
       throw Object.assign(new Error(err?.detail ?? 'Error al eliminar'), { httpStatus: res.status })
@@ -151,7 +184,7 @@ export const api = {
   ): Promise<void> => {
     const params = new URLSearchParams({ scope: scope.kind })
     if (scope.kind === 'project') params.set('project_id', String(scope.projectId))
-    const res = await fetch(`${BASE}/workers/${workerId}/documents/download-zip?${params}`)
+    const res = await fetch(`${BASE}/workers/${workerId}/documents/download-zip?${params}`, { headers: authHeaders() })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
       throw new Error(err?.detail ?? 'Error al descargar el ZIP')
@@ -174,7 +207,7 @@ export const api = {
   bulkUploadWorkers: async (file: File): Promise<BulkUploadResult> => {
     const form = new FormData()
     form.append('file', file)
-    const res = await fetch(`${BASE}/workers/bulk-upload`, { method: 'POST', body: form })
+    const res = await fetch(`${BASE}/workers/bulk-upload`, { method: 'POST', body: form, headers: authHeaders() })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
       throw new Error(err?.detail ?? `${res.status} ${res.statusText}`)
@@ -222,7 +255,7 @@ export const api = {
     if (payload.custom_alert_percentage !== undefined) {
       form.append('custom_alert_percentage', String(payload.custom_alert_percentage ?? 0))
     }
-    const res = await fetch(`${BASE}/worker-documents/${docId}`, { method: 'PATCH', body: form })
+    const res = await fetch(`${BASE}/worker-documents/${docId}`, { method: 'PATCH', body: form, headers: authHeaders() })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
       throw Object.assign(new Error(err?.detail ?? 'Error al actualizar el documento'), { httpStatus: res.status })
@@ -265,7 +298,7 @@ export const api = {
     if (payload.issue_date) form.append('issue_date', payload.issue_date)
     if (payload.expiry_date) form.append('expiry_date', payload.expiry_date)
     form.append('file', payload.file)
-    const res = await fetch(`${BASE}/vehicle-documents/`, { method: 'POST', body: form })
+    const res = await fetch(`${BASE}/vehicle-documents/`, { method: 'POST', body: form, headers: authHeaders() })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
       throw new Error(err?.detail ?? 'Error al subir el archivo')
@@ -283,7 +316,7 @@ export const api = {
     if (payload.file) form.append('file', payload.file)
     if (payload.custom_alert_days !== undefined)
       form.append('custom_alert_days', String(payload.custom_alert_days ?? 0))
-    const res = await fetch(`${BASE}/vehicle-documents/${docId}`, { method: 'PATCH', body: form })
+    const res = await fetch(`${BASE}/vehicle-documents/${docId}`, { method: 'PATCH', body: form, headers: authHeaders() })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
       throw new Error(err?.detail ?? 'Error al actualizar el documento')
@@ -292,7 +325,7 @@ export const api = {
   scanVehicleDocument: async (file: File): Promise<VehicleAIScanResult> => {
     const form = new FormData()
     form.append('file', file)
-    const res = await fetch(`${BASE}/vehicle-documents/ai-scan`, { method: 'POST', body: form })
+    const res = await fetch(`${BASE}/vehicle-documents/ai-scan`, { method: 'POST', body: form, headers: authHeaders() })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
       throw new Error(err?.detail ?? 'Error al analizar el documento')
@@ -336,7 +369,7 @@ export const api = {
     if (payload.issue_date) form.append('issue_date', payload.issue_date)
     if (payload.expiry_date) form.append('expiry_date', payload.expiry_date)
     form.append('file', payload.file)
-    const res = await fetch(`${BASE}/worker-documents/`, { method: 'POST', body: form })
+    const res = await fetch(`${BASE}/worker-documents/`, { method: 'POST', body: form, headers: authHeaders() })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
       throw Object.assign(new Error(err?.detail ?? 'Error al subir el archivo'), { httpStatus: res.status })
@@ -344,7 +377,7 @@ export const api = {
   },
 
   archiveWorkerDocument: async (docId: number): Promise<void> => {
-    const res = await fetch(`${BASE}/worker-documents/${docId}/archive`, { method: 'POST' })
+    const res = await fetch(`${BASE}/worker-documents/${docId}/archive`, { method: 'POST', headers: authHeaders() })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
       throw new Error(err?.detail ?? 'Error al archivar el documento')
@@ -355,11 +388,18 @@ export const api = {
     const form = new FormData()
     form.append('file', file)
     if (validityDays != null) form.append('validity_days', String(validityDays))
-    const res = await fetch(`${BASE}/worker-documents/ai-scan`, { method: 'POST', body: form })
+    const res = await fetch(`${BASE}/worker-documents/ai-scan`, { method: 'POST', body: form, headers: authHeaders() })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
       throw new Error(err?.detail ?? 'Error al analizar el documento')
     }
     return res.json()
   },
+
+  // Admin — user management
+  getAdminUsers: () => get<AdminUser[]>('/admin/users'),
+  patchAdminUser: (id: number, body: AdminUserPatch) =>
+    patch<AdminUser>(`/admin/users/${id}`, body),
+  replaceUserPermissions: (id: number, permissions: AdminPermissionItem[]) =>
+    put<AdminUser>(`/admin/users/${id}/permissions`, { permissions }),
 }

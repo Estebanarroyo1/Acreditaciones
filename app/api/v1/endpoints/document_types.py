@@ -3,6 +3,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.permissions import Module, PermissionLevel, require_module
 from app.db.session import get_db
 from app.models.associations import WorkerDocument
 from app.models.document_type import DocumentType
@@ -14,8 +15,11 @@ from app.schemas.document_type import (
 
 router = APIRouter(prefix="/document-types", tags=["document-types"])
 
+_R = [Depends(require_module(Module.configuracion, PermissionLevel.read))]
+_W = [Depends(require_module(Module.configuracion, PermissionLevel.write))]
 
-@router.get("/", response_model=list[DocumentTypeRead])
+
+@router.get("/", response_model=list[DocumentTypeRead], dependencies=_R)
 async def list_document_types(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(DocumentType).where(DocumentType.is_active == True)
@@ -24,7 +28,7 @@ async def list_document_types(db: AsyncSession = Depends(get_db)):
 
 
 @router.post(
-    "/", response_model=DocumentTypeRead, status_code=status.HTTP_201_CREATED
+    "/", response_model=DocumentTypeRead, status_code=status.HTTP_201_CREATED, dependencies=_W
 )
 async def create_document_type(
     payload: DocumentTypeCreate, db: AsyncSession = Depends(get_db)
@@ -43,7 +47,7 @@ async def create_document_type(
     return doc_type
 
 
-@router.get("/{doc_type_id}", response_model=DocumentTypeRead)
+@router.get("/{doc_type_id}", response_model=DocumentTypeRead, dependencies=_R)
 async def get_document_type(doc_type_id: int, db: AsyncSession = Depends(get_db)):
     doc_type = await db.get(DocumentType, doc_type_id)
     if not doc_type:
@@ -51,7 +55,7 @@ async def get_document_type(doc_type_id: int, db: AsyncSession = Depends(get_db)
     return doc_type
 
 
-@router.patch("/{doc_type_id}", response_model=DocumentTypeRead)
+@router.patch("/{doc_type_id}", response_model=DocumentTypeRead, dependencies=_W)
 async def update_document_type(
     doc_type_id: int,
     payload: DocumentTypeUpdate,
@@ -74,7 +78,7 @@ async def update_document_type(
     return doc_type
 
 
-@router.delete("/{doc_type_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{doc_type_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=_W)
 async def delete_document_type(
     doc_type_id: int,
     db: AsyncSession = Depends(get_db),

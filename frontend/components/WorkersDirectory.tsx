@@ -7,6 +7,7 @@ import { api } from '@/lib/api'
 import { TrafficLightBadge } from './TrafficLightBadge'
 import { NewWorkerModal } from './NewWorkerModal'
 import { BulkUploadModal } from './BulkUploadModal'
+import { usePermissions } from '@/lib/permissions'
 
 // ── Semáforo 3 luces compacto + etiqueta (SAP Fiori high-density) ──────────
 function SemaforoCell({ light, label }: { light: string; label: string }) {
@@ -235,6 +236,15 @@ export function WorkersDirectory({ projects }: { projects: Project[] }) {
   const [workerToDelete, setWorkerToDelete] = useState<WorkerGlobalStatus | null>(null)
   const [deleting, setDeleting] = useState(false)
   const router = useRouter()
+  const { canWrite } = usePermissions()
+
+  const [prevViewStatus, setPrevViewStatus] = useState(viewStatus)
+  const [prevLocationFilter, setPrevLocationFilter] = useState(locationFilter)
+  if (viewStatus !== prevViewStatus || locationFilter !== prevLocationFilter) {
+    setPrevViewStatus(viewStatus)
+    setPrevLocationFilter(locationFilter)
+    setLoading(true)
+  }
 
   const loadWorkers = useCallback(async () => {
     setLoading(true)
@@ -251,7 +261,15 @@ export function WorkersDirectory({ projects }: { projects: Project[] }) {
     }
   }, [viewStatus, locationFilter])
 
-  useEffect(() => { loadWorkers() }, [loadWorkers])
+  useEffect(() => {
+    api.getWorkersGlobalStatus({
+      status: viewStatus,
+      ...(locationFilter !== 'all' && { location: locationFilter }),
+    })
+      .then(data => setWorkers(data))
+      .catch(() => setWorkers([]))
+      .finally(() => setLoading(false))
+  }, [viewStatus, locationFilter])
 
   const handleRestore = async (workerId: number) => {
     try {
@@ -329,24 +347,28 @@ export function WorkersDirectory({ projects }: { projects: Project[] }) {
               Historial (Archivados)
             </button>
           </div>
-          <button
-            onClick={() => setBulkModalOpen(true)}
-            className="flex items-center gap-2 px-4 py-2.5 bg-white border border-slate-300 text-slate-700 text-sm font-semibold rounded-xl hover:bg-slate-50 hover:border-slate-400 transition-colors shadow-sm"
-          >
-            <svg className="w-4 h-4 text-green-600" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
-            </svg>
-            Carga Masiva
-          </button>
-          <button
-            onClick={() => setModalOpen(true)}
-            className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white text-sm font-semibold rounded-xl hover:bg-blue-700 transition-colors shadow-sm"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-            </svg>
-            Nuevo Trabajador
-          </button>
+          {canWrite('trabajadores') && (
+            <button
+              onClick={() => setBulkModalOpen(true)}
+              className="flex items-center gap-2 px-4 py-2.5 bg-white border border-slate-300 text-slate-700 text-sm font-semibold rounded-xl hover:bg-slate-50 hover:border-slate-400 transition-colors shadow-sm"
+            >
+              <svg className="w-4 h-4 text-green-600" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+              </svg>
+              Carga Masiva
+            </button>
+          )}
+          {canWrite('trabajadores') && (
+            <button
+              onClick={() => setModalOpen(true)}
+              className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white text-sm font-semibold rounded-xl hover:bg-blue-700 transition-colors shadow-sm"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+              </svg>
+              Nuevo Trabajador
+            </button>
+          )}
         </div>
       </div>
 

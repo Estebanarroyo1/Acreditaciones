@@ -32,7 +32,16 @@ export function BaseConfigView({ onProjectsChanged }: { onProjectsChanged?: () =
     }
   }, [])
 
-  useEffect(() => { loadData() }, [loadData])
+  useEffect(() => {
+    Promise.all([api.getDocumentTypes(), api.getDocumentCategories(), api.getProjects()])
+      .then(([dts, cats, projs]) => {
+        setDocTypes(dts)
+        setCategories(cats)
+        setProjects(projs)
+      })
+      .catch(() => { /* silently ignore */ })
+      .finally(() => setLoading(false))
+  }, [])
 
   const handleProjectCreated = () => {
     loadData()

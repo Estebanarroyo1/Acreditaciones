@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.permissions import Module, PermissionLevel, require_module
 from app.db.session import get_db
 from app.models.system_settings import SystemSetting
 from app.schemas.system_settings import (
@@ -14,6 +15,9 @@ from app.schemas.system_settings import (
 )
 
 router = APIRouter(prefix="/settings", tags=["settings"])
+
+_R = [Depends(require_module(Module.configuracion, PermissionLevel.read))]
+_W = [Depends(require_module(Module.configuracion, PermissionLevel.write))]
 
 _ALERT_KEY = "global_alert_percentage"
 _DEFAULT_PCT = 20
@@ -33,13 +37,13 @@ async def _get_or_create_setting(db: AsyncSession, key: str, default: int) -> Sy
     return setting
 
 
-@router.get("/alerts", response_model=AlertSettings)
+@router.get("/alerts", response_model=AlertSettings, dependencies=_R)
 async def get_alert_settings(db: AsyncSession = Depends(get_db)):
     setting = await _get_or_create_setting(db, _ALERT_KEY, _DEFAULT_PCT)
     return AlertSettings(global_alert_percentage=json.loads(setting.value))
 
 
-@router.patch("/alerts", response_model=AlertSettings)
+@router.patch("/alerts", response_model=AlertSettings, dependencies=_W)
 async def update_alert_settings(
     payload: AlertSettingsUpdate,
     db: AsyncSession = Depends(get_db),
@@ -51,13 +55,13 @@ async def update_alert_settings(
     return AlertSettings(global_alert_percentage=json.loads(setting.value))
 
 
-@router.get("/vehicle-alerts", response_model=VehicleAlertSettings)
+@router.get("/vehicle-alerts", response_model=VehicleAlertSettings, dependencies=_R)
 async def get_vehicle_alert_settings(db: AsyncSession = Depends(get_db)):
     setting = await _get_or_create_setting(db, _VEHICLE_ALERT_KEY, _DEFAULT_VEHICLE_DAYS)
     return VehicleAlertSettings(vehicle_global_alert_days=json.loads(setting.value))
 
 
-@router.patch("/vehicle-alerts", response_model=VehicleAlertSettings)
+@router.patch("/vehicle-alerts", response_model=VehicleAlertSettings, dependencies=_W)
 async def update_vehicle_alert_settings(
     payload: VehicleAlertSettingsUpdate,
     db: AsyncSession = Depends(get_db),

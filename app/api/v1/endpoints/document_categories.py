@@ -3,6 +3,7 @@ from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.permissions import Module, PermissionLevel, require_module
 from app.db.session import get_db
 from app.models.document_category import DocumentCategory
 from app.models.document_type import DocumentType
@@ -14,14 +15,17 @@ from app.schemas.document_category import (
 
 router = APIRouter(prefix="/document-categories", tags=["document-categories"])
 
+_R = [Depends(require_module(Module.configuracion, PermissionLevel.read))]
+_W = [Depends(require_module(Module.configuracion, PermissionLevel.write))]
 
-@router.get("/", response_model=list[DocumentCategoryRead])
+
+@router.get("/", response_model=list[DocumentCategoryRead], dependencies=_R)
 async def list_document_categories(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(DocumentCategory).order_by(DocumentCategory.name))
     return result.scalars().all()
 
 
-@router.post("/", response_model=DocumentCategoryRead, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=DocumentCategoryRead, status_code=status.HTTP_201_CREATED, dependencies=_W)
 async def create_document_category(
     payload: DocumentCategoryCreate, db: AsyncSession = Depends(get_db)
 ):
@@ -39,7 +43,7 @@ async def create_document_category(
     return category
 
 
-@router.get("/{category_id}", response_model=DocumentCategoryRead)
+@router.get("/{category_id}", response_model=DocumentCategoryRead, dependencies=_R)
 async def get_document_category(category_id: int, db: AsyncSession = Depends(get_db)):
     category = await db.get(DocumentCategory, category_id)
     if not category:
@@ -47,7 +51,7 @@ async def get_document_category(category_id: int, db: AsyncSession = Depends(get
     return category
 
 
-@router.patch("/{category_id}", response_model=DocumentCategoryRead)
+@router.patch("/{category_id}", response_model=DocumentCategoryRead, dependencies=_W)
 async def update_document_category(
     category_id: int,
     payload: DocumentCategoryUpdate,
@@ -70,7 +74,7 @@ async def update_document_category(
     return category
 
 
-@router.delete("/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{category_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=_W)
 async def delete_document_category(category_id: int, db: AsyncSession = Depends(get_db)):
     category = await db.get(DocumentCategory, category_id)
     if not category:

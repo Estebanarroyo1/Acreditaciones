@@ -4,6 +4,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.permissions import Module, PermissionLevel, require_module
 from app.db.session import get_db
 from app.models.project import Project
 from app.models.worker import Worker
@@ -15,14 +16,17 @@ from app.schemas.associations import ProjectRequirementRead
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
+_R = [Depends(require_module(Module.trabajadores, PermissionLevel.read))]
+_W = [Depends(require_module(Module.trabajadores, PermissionLevel.write))]
 
-@router.get("/", response_model=list[ProjectRead])
+
+@router.get("/", response_model=list[ProjectRead], dependencies=_R)
 async def list_projects(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Project).where(Project.is_active == True))
     return result.scalars().all()
 
 
-@router.post("/", response_model=ProjectRead, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=ProjectRead, status_code=status.HTTP_201_CREATED, dependencies=_W)
 async def create_project(payload: ProjectCreate, db: AsyncSession = Depends(get_db)):
     project = Project(**payload.model_dump())
     db.add(project)
@@ -31,13 +35,13 @@ async def create_project(payload: ProjectCreate, db: AsyncSession = Depends(get_
     return project
 
 
-@router.get("/archived", response_model=list[ProjectRead])
+@router.get("/archived", response_model=list[ProjectRead], dependencies=_R)
 async def list_archived_projects(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Project).where(Project.is_active == False))
     return result.scalars().all()
 
 
-@router.get("/{project_id}", response_model=ProjectRead)
+@router.get("/{project_id}", response_model=ProjectRead, dependencies=_R)
 async def get_project(project_id: int, db: AsyncSession = Depends(get_db)):
     project = await db.get(Project, project_id)
     if not project:
@@ -45,7 +49,7 @@ async def get_project(project_id: int, db: AsyncSession = Depends(get_db)):
     return project
 
 
-@router.patch("/{project_id}", response_model=ProjectRead)
+@router.patch("/{project_id}", response_model=ProjectRead, dependencies=_W)
 async def update_project(
     project_id: int, payload: ProjectUpdate, db: AsyncSession = Depends(get_db)
 ):
@@ -59,7 +63,7 @@ async def update_project(
     return project
 
 
-@router.post("/{project_id}/archive", response_model=ProjectRead)
+@router.post("/{project_id}/archive", response_model=ProjectRead, dependencies=_W)
 async def archive_project(project_id: int, db: AsyncSession = Depends(get_db)):
     project = await db.get(Project, project_id)
     if not project:
@@ -70,7 +74,7 @@ async def archive_project(project_id: int, db: AsyncSession = Depends(get_db)):
     return project
 
 
-@router.post("/{project_id}/restore", response_model=ProjectRead)
+@router.post("/{project_id}/restore", response_model=ProjectRead, dependencies=_W)
 async def restore_project(project_id: int, db: AsyncSession = Depends(get_db)):
     project = await db.get(Project, project_id)
     if not project:
@@ -85,6 +89,7 @@ async def restore_project(project_id: int, db: AsyncSession = Depends(get_db)):
     "/{project_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Eliminar proyecto permanentemente",
+    dependencies=_W,
 )
 async def delete_project(project_id: int, db: AsyncSession = Depends(get_db)):
     project = await db.get(Project, project_id)
@@ -98,6 +103,7 @@ async def delete_project(project_id: int, db: AsyncSession = Depends(get_db)):
     "/{project_id}/document-types",
     response_model=list[ProjectRequirementRead],
     summary="Listar tipos de documento requeridos por un proyecto",
+    dependencies=_R,
 )
 async def list_project_requirements(
     project_id: int, db: AsyncSession = Depends(get_db)
@@ -117,6 +123,7 @@ async def list_project_requirements(
     response_model=ProjectRequirementRead,
     status_code=status.HTTP_201_CREATED,
     summary="Agregar tipo de documento requerido al proyecto",
+    dependencies=_W,
 )
 async def add_project_requirement(
     project_id: int,
@@ -156,6 +163,7 @@ async def add_project_requirement(
     "/{project_id}/document-types/{document_type_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Quitar tipo de documento requerido del proyecto",
+    dependencies=_W,
 )
 async def remove_project_requirement(
     project_id: int,
@@ -179,6 +187,7 @@ async def remove_project_requirement(
     "/{project_id}/workers",
     response_model=list[WorkerRead],
     summary="Listar trabajadores asignados al proyecto",
+    dependencies=_R,
 )
 async def list_project_workers(project_id: int, db: AsyncSession = Depends(get_db)):
     if not await db.get(Project, project_id):

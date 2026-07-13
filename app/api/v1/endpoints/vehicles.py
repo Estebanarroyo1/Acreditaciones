@@ -3,14 +3,18 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.permissions import Module, PermissionLevel, require_module
 from app.db.session import get_db
 from app.models.vehicle import Vehicle
 from app.schemas.vehicle import VehicleCreate, VehicleUpdate, VehicleRead
 
 router = APIRouter(prefix="/vehicles", tags=["vehicles"])
 
+_R = [Depends(require_module(Module.vehiculos, PermissionLevel.read))]
+_W = [Depends(require_module(Module.vehiculos, PermissionLevel.write))]
 
-@router.get("/", response_model=list[VehicleRead])
+
+@router.get("/", response_model=list[VehicleRead], dependencies=_R)
 async def list_vehicles(
     active_only: bool = True,
     db: AsyncSession = Depends(get_db),
@@ -22,7 +26,7 @@ async def list_vehicles(
     return result.scalars().all()
 
 
-@router.post("/", response_model=VehicleRead, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=VehicleRead, status_code=status.HTTP_201_CREATED, dependencies=_W)
 async def create_vehicle(payload: VehicleCreate, db: AsyncSession = Depends(get_db)):
     vehicle = Vehicle(**payload.model_dump())
     db.add(vehicle)
@@ -38,7 +42,7 @@ async def create_vehicle(payload: VehicleCreate, db: AsyncSession = Depends(get_
     return vehicle
 
 
-@router.get("/{vehicle_id}", response_model=VehicleRead)
+@router.get("/{vehicle_id}", response_model=VehicleRead, dependencies=_R)
 async def get_vehicle(vehicle_id: int, db: AsyncSession = Depends(get_db)):
     vehicle = await db.get(Vehicle, vehicle_id)
     if not vehicle:
@@ -46,7 +50,7 @@ async def get_vehicle(vehicle_id: int, db: AsyncSession = Depends(get_db)):
     return vehicle
 
 
-@router.patch("/{vehicle_id}", response_model=VehicleRead)
+@router.patch("/{vehicle_id}", response_model=VehicleRead, dependencies=_W)
 async def update_vehicle(
     vehicle_id: int, payload: VehicleUpdate, db: AsyncSession = Depends(get_db)
 ):
@@ -67,7 +71,7 @@ async def update_vehicle(
     return vehicle
 
 
-@router.patch("/{vehicle_id}/archive", response_model=VehicleRead)
+@router.patch("/{vehicle_id}/archive", response_model=VehicleRead, dependencies=_W)
 async def archive_vehicle(vehicle_id: int, db: AsyncSession = Depends(get_db)):
     vehicle = await db.get(Vehicle, vehicle_id)
     if not vehicle:
@@ -78,7 +82,7 @@ async def archive_vehicle(vehicle_id: int, db: AsyncSession = Depends(get_db)):
     return vehicle
 
 
-@router.patch("/{vehicle_id}/restore", response_model=VehicleRead)
+@router.patch("/{vehicle_id}/restore", response_model=VehicleRead, dependencies=_W)
 async def restore_vehicle(vehicle_id: int, db: AsyncSession = Depends(get_db)):
     vehicle = await db.get(Vehicle, vehicle_id)
     if not vehicle:
@@ -89,7 +93,7 @@ async def restore_vehicle(vehicle_id: int, db: AsyncSession = Depends(get_db)):
     return vehicle
 
 
-@router.delete("/{vehicle_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{vehicle_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=_W)
 async def delete_vehicle(vehicle_id: int, db: AsyncSession = Depends(get_db)):
     vehicle = await db.get(Vehicle, vehicle_id)
     if not vehicle:

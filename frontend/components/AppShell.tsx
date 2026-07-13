@@ -2,7 +2,9 @@
 
 import { createContext, useContext, useState, type ReactNode } from 'react'
 import { usePathname } from 'next/navigation'
+import { signOut } from 'next-auth/react'
 import Link from 'next/link'
+import { usePermissions } from '@/lib/permissions'
 
 // ── Nav context ────────────────────────────────────────────────────────────
 export type ActiveView = 'projects' | 'workers' | 'config' | 'reports' | 'fleet'
@@ -52,6 +54,13 @@ function IconReports() {
     </svg>
   )
 }
+function IconAdmin() {
+  return (
+    <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={1.75} stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
+    </svg>
+  )
+}
 
 // ── ERP nav item (left column, light theme) ────────────────────────────────
 function NavItem({ icon, label, active, onClick }: {
@@ -98,10 +107,29 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [view, setView] = useState<ActiveView>('projects')
   const pathname = usePathname()
   const isRoot = pathname === '/'
-  const meta = VIEW_META[view]
+  const { user, isAdmin, canRead, loading } = usePermissions()
+
+  const showWorkers = canRead('trabajadores')
+  const showFleet   = canRead('vehiculos')
+  const showConfig  = canRead('configuracion')
+  const showReports = canRead('reportes')
+  const noModules   = !loading && !showWorkers && !showFleet && !showConfig && !showReports
+
+  // Derive the effective view — falls back to first accessible if current is forbidden
+  const allowedViews: ActiveView[] = [
+    ...(showWorkers ? (['projects', 'workers'] as ActiveView[]) : []),
+    ...(showFleet   ? (['fleet']               as ActiveView[]) : []),
+    ...(showConfig  ? (['config']              as ActiveView[]) : []),
+    ...(showReports ? (['reports']             as ActiveView[]) : []),
+  ]
+  const effectiveView: ActiveView =
+    !loading && allowedViews.length > 0 && !allowedViews.includes(view)
+      ? allowedViews[0]
+      : view
+  const meta = VIEW_META[effectiveView]
 
   return (
-    <NavContext.Provider value={{ view, setView }}>
+    <NavContext.Provider value={{ view: effectiveView, setView }}>
       <div className="h-screen w-full flex flex-col overflow-hidden">
 
         {/* ── TOP NAV ───────────────────────────────────────────────────── */}
@@ -117,9 +145,23 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="w-px h-5 bg-white/20" />
           <span className="text-white/80 text-xs font-medium">{meta.title}</span>
           <span className="text-white/40 text-[11px] hidden sm:inline">{meta.subtitle}</span>
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex items-center gap-3">
             <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
             <span className="text-white/50 text-[11px]">API conectada</span>
+            {user && (
+              <>
+                <div className="w-px h-4 bg-white/20" />
+                <span className="text-white/70 text-[11px] max-w-[140px] truncate">
+                  {user.full_name ?? user.email}
+                </span>
+                <button
+                  onClick={() => signOut({ callbackUrl: '/login' })}
+                  className="text-white/50 hover:text-white text-[11px] underline underline-offset-2 transition-colors"
+                >
+                  Cerrar sesión
+                </button>
+              </>
+            )}
           </div>
         </header>
 
@@ -131,21 +173,43 @@ export function AppShell({ children }: { children: ReactNode }) {
             <p className="text-[9px] font-bold uppercase tracking-[0.1em] text-slate-400 px-3 pt-3 pb-1">Módulos</p>
             {isRoot ? (
               <>
-                <NavItem icon={<IconProjects />} label="Proyectos" active={view === 'projects'} onClick={() => setView('projects')} />
-                <NavItem icon={<IconWorkers />} label="Empleados" active={view === 'workers'} onClick={() => setView('workers')} />
-                <NavItem icon={<IconFleet />} label="Flota y Equipos" active={view === 'fleet'} onClick={() => setView('fleet')} />
-                <p className="text-[9px] font-bold uppercase tracking-[0.1em] text-slate-400 px-3 pt-3 pb-1">Sistema</p>
-                <NavItem icon={<IconConfig />} label="Configuración" active={view === 'config'} onClick={() => setView('config')} />
-                <NavItem icon={<IconReports />} label="Reportes" active={view === 'reports'} onClick={() => setView('reports')} />
+                {showWorkers && <NavItem icon={<IconProjects />} label="Proyectos" active={effectiveView === 'projects'} onClick={() => setView('projects')} />}
+                {showWorkers && <NavItem icon={<IconWorkers />} label="Empleados" active={effectiveView === 'workers'} onClick={() => setView('workers')} />}
+                {showFleet   && <NavItem icon={<IconFleet />} label="Flota y Equipos" active={effectiveView === 'fleet'} onClick={() => setView('fleet')} />}
+                {(showConfig || showReports) && (
+                  <p className="text-[9px] font-bold uppercase tracking-[0.1em] text-slate-400 px-3 pt-3 pb-1">Sistema</p>
+                )}
+                {showConfig  && <NavItem icon={<IconConfig />} label="Configuración" active={effectiveView === 'config'} onClick={() => setView('config')} />}
+                {showReports && <NavItem icon={<IconReports />} label="Reportes" active={effectiveView === 'reports'} onClick={() => setView('reports')} />}
+                {noModules && !isAdmin && (
+                  <p className="text-[11px] text-slate-400 px-3 py-4">Sin módulos asignados.</p>
+                )}
+                {isAdmin && (
+                  <>
+                    <p className="text-[9px] font-bold uppercase tracking-[0.1em] text-slate-400 px-3 pt-3 pb-1">Administración</p>
+                    <NavLink icon={<IconAdmin />} label="Usuarios" href="/admin/usuarios" />
+                  </>
+                )}
               </>
             ) : (
               <>
-                <NavLink icon={<IconProjects />} label="Proyectos" href="/" />
-                <NavLink icon={<IconWorkers />} label="Empleados" href="/trabajadores" />
-                <NavLink icon={<IconFleet />} label="Flota y Equipos" href="/vehiculos" />
-                <p className="text-[9px] font-bold uppercase tracking-[0.1em] text-slate-400 px-3 pt-3 pb-1">Sistema</p>
-                <NavLink icon={<IconConfig />} label="Configuración" href="/" />
-                <NavLink icon={<IconReports />} label="Reportes" href="/" />
+                {showWorkers && <NavLink icon={<IconProjects />} label="Proyectos" href="/" />}
+                {showWorkers && <NavLink icon={<IconWorkers />} label="Empleados" href="/trabajadores" />}
+                {showFleet   && <NavLink icon={<IconFleet />} label="Flota y Equipos" href="/vehiculos" />}
+                {(showConfig || showReports) && (
+                  <p className="text-[9px] font-bold uppercase tracking-[0.1em] text-slate-400 px-3 pt-3 pb-1">Sistema</p>
+                )}
+                {showConfig  && <NavLink icon={<IconConfig />} label="Configuración" href="/" />}
+                {showReports && <NavLink icon={<IconReports />} label="Reportes" href="/" />}
+                {noModules && !isAdmin && (
+                  <p className="text-[11px] text-slate-400 px-3 py-4">Sin módulos asignados.</p>
+                )}
+                {isAdmin && (
+                  <>
+                    <p className="text-[9px] font-bold uppercase tracking-[0.1em] text-slate-400 px-3 pt-3 pb-1">Administración</p>
+                    <NavLink icon={<IconAdmin />} label="Usuarios" href="/admin/usuarios" />
+                  </>
+                )}
               </>
             )}
           </aside>

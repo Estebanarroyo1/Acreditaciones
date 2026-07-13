@@ -11,7 +11,9 @@ interface Props {
 }
 
 export function DocumentPreviewModal({ docId, label, onClose }: Props) {
-  const [openedAt, setOpenedAt] = useState(0)
+  // Cache-busting sequence: increments each time docId becomes non-null so the iframe
+  // re-fetches even when the URL path is the same after a file replacement.
+  const [openSeq, setOpenSeq] = useState(0)
 
   useEffect(() => {
     if (!docId) return
@@ -22,15 +24,13 @@ export function DocumentPreviewModal({ docId, label, onClose }: Props) {
     return () => window.removeEventListener('keydown', handler)
   }, [docId, onClose])
 
-  // Generate a fresh timestamp each time the modal opens (docId goes null → non-null).
-  // This busts any browser cache for the same document URL after a file replacement.
   useEffect(() => {
-    if (docId) setOpenedAt(Date.now())
+    if (docId) Promise.resolve().then(() => setOpenSeq(n => n + 1))
   }, [docId])
 
   if (typeof document === 'undefined' || !docId) return null
 
-  const viewUrl = `${api.getDocumentViewUrl(docId)}?t=${openedAt}`
+  const viewUrl = `${api.getDocumentViewUrl(docId)}?n=${openSeq}`
 
   return createPortal(
     <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">

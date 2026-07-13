@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { api } from '@/lib/api'
 import type { WorkerGlobalStatus } from '@/lib/types'
@@ -11,19 +11,12 @@ export default function AprobacionesPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
-  const load = useCallback(async () => {
-    try {
-      setLoading(true)
-      const data = await api.getWorkersGlobalStatus()
-      setWorkers(data)
-    } catch {
-      setError('No se pudo cargar la bandeja de aprobaciones.')
-    } finally {
-      setLoading(false)
-    }
+  useEffect(() => {
+    api.getWorkersGlobalStatus()
+      .then(data => setWorkers(data))
+      .catch(() => setError('No se pudo cargar la bandeja de aprobaciones.'))
+      .finally(() => setLoading(false))
   }, [])
-
-  useEffect(() => { load() }, [load])
 
   const pendingWorkers = workers.filter(
     w => w.global_traffic_light === 'red' || w.global_traffic_light === 'yellow' || w.global_traffic_light === null

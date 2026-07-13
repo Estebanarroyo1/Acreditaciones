@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api } from '@/lib/api'
 
 const PRESETS = [7, 14, 30, 60, 90]
@@ -13,20 +13,15 @@ export default function AlertasPage() {
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
 
-  const load = useCallback(async () => {
-    try {
-      setLoading(true)
-      const settings = await api.getVehicleAlertSettings()
-      setGlobalDays(settings.vehicle_global_alert_days)
-      setInput(String(settings.vehicle_global_alert_days))
-    } catch {
-      setError('No se pudo cargar la configuración de alertas.')
-    } finally {
-      setLoading(false)
-    }
+  useEffect(() => {
+    api.getVehicleAlertSettings()
+      .then(settings => {
+        setGlobalDays(settings.vehicle_global_alert_days)
+        setInput(String(settings.vehicle_global_alert_days))
+      })
+      .catch(() => setError('No se pudo cargar la configuración de alertas.'))
+      .finally(() => setLoading(false))
   }, [])
-
-  useEffect(() => { load() }, [load])
 
   const handleSave = async () => {
     const n = parseInt(input)

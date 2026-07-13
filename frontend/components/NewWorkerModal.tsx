@@ -30,14 +30,19 @@ export function NewWorkerModal({ isOpen, projects, onClose, onSuccess }: Props) 
   const [apiError, setApiError] = useState('')
   const firstInputRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => {
+  const [prevIsOpen, setPrevIsOpen] = useState(isOpen)
+  if (isOpen !== prevIsOpen) {
+    setPrevIsOpen(isOpen)
     if (isOpen) {
       setForm(EMPTY)
       setSelectedProjects(new Set())
       setErrors({})
       setApiError('')
-      setTimeout(() => firstInputRef.current?.focus(), 50)
     }
+  }
+
+  useEffect(() => {
+    if (isOpen) setTimeout(() => firstInputRef.current?.focus(), 50)
   }, [isOpen])
 
   const set = (field: keyof FormState) => (e: React.ChangeEvent<HTMLInputElement>) => {

@@ -168,7 +168,7 @@ export function Dashboard({ initialProjects }: { initialProjects: Project[] }) {
   const [loadingArchived, setLoadingArchived] = useState(false)
   const [selectedProject, setSelectedProject] = useState<Project | null>(initialProjects[0] ?? null)
   const [entries, setEntries] = useState<WorkerEntry[]>([])
-  const [loadingWorkers, setLoadingWorkers] = useState(false)
+  const [loadingWorkers, setLoadingWorkers] = useState(!!initialProjects[0])
 
   const [panelOpen, setPanelOpen] = useState(false)
   const [panelWorker, setPanelWorker] = useState<Worker | null>(null)
@@ -195,29 +195,29 @@ export function Dashboard({ initialProjects }: { initialProjects: Project[] }) {
     } catch { /* ignore */ }
   }
 
-  const loadProject = useCallback(async (project: Project) => {
-    setLoadingWorkers(true)
+  const [prevProjectId, setPrevProjectId] = useState<number | null>(selectedProject?.id ?? null)
+  if ((selectedProject?.id ?? null) !== prevProjectId) {
+    setPrevProjectId(selectedProject?.id ?? null)
+    setLoadingWorkers(!!selectedProject)
     setEntries([])
-    try {
-      const workers = await api.getProjectWorkers(project.id)
-      setEntries(workers.map((w) => ({ worker: w, accreditation: null, loading: true, error: false })))
-      const results = await Promise.allSettled(workers.map((w) => api.getAccreditation(w.id, project.id)))
-      setEntries(workers.map((w, i) => ({
-        worker: w,
-        accreditation: results[i].status === 'fulfilled' ? results[i].value : null,
-        loading: false,
-        error: results[i].status === 'rejected',
-      })))
-    } catch {
-      setEntries([])
-    } finally {
-      setLoadingWorkers(false)
-    }
-  }, [])
+  }
 
   useEffect(() => {
-    if (selectedProject) loadProject(selectedProject)
-  }, [selectedProject, loadProject])
+    if (!selectedProject) return
+    api.getProjectWorkers(selectedProject.id)
+      .then(async (workers) => {
+        setEntries(workers.map((w) => ({ worker: w, accreditation: null, loading: true, error: false })))
+        const results = await Promise.allSettled(workers.map((w) => api.getAccreditation(w.id, selectedProject.id)))
+        setEntries(workers.map((w, i) => ({
+          worker: w,
+          accreditation: results[i].status === 'fulfilled' ? results[i].value : null,
+          loading: false,
+          error: results[i].status === 'rejected',
+        })))
+      })
+      .catch(() => setEntries([]))
+      .finally(() => setLoadingWorkers(false))
+  }, [selectedProject])
 
   const refreshWorker = useCallback(async (workerId: number, projectId: number) => {
     try {

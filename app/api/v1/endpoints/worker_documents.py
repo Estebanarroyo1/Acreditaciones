@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.permissions import Module, PermissionLevel, require_module
 from app.db.session import get_db
 from app.models.associations import (
     DocumentStatus,
@@ -21,8 +22,11 @@ from app.services.worker_documents import resolve_document_dates
 
 router = APIRouter(prefix="/worker-documents", tags=["worker-documents"])
 
+_R = [Depends(require_module(Module.trabajadores, PermissionLevel.read))]
+_W = [Depends(require_module(Module.trabajadores, PermissionLevel.write))]
 
-@router.post("/ai-scan", summary="Analizar documento con IA y extraer fechas (sin guardar)")
+
+@router.post("/ai-scan", summary="Analizar documento con IA y extraer fechas (sin guardar)", dependencies=_W)
 async def ai_scan_worker_document(
     file: UploadFile = File(...),
     validity_days: int | None = Form(None),
@@ -66,6 +70,7 @@ async def ai_scan_worker_document(
     response_model=WorkerDocumentRead,
     status_code=status.HTTP_201_CREATED,
     summary="Subir documento de acreditación",
+    dependencies=_W,
 )
 async def upload_document(
     worker_id: int = Form(...),
@@ -161,7 +166,7 @@ async def upload_document(
     return refreshed.scalar_one()
 
 
-@router.get("/{doc_id}/view")
+@router.get("/{doc_id}/view", dependencies=_R)
 async def view_document(doc_id: int, db: AsyncSession = Depends(get_db)):
     doc = await db.get(WorkerDocument, doc_id)
     if not doc:
@@ -177,7 +182,7 @@ async def view_document(doc_id: int, db: AsyncSession = Depends(get_db)):
     )
 
 
-@router.get("/{doc_id}/download")
+@router.get("/{doc_id}/download", dependencies=_R)
 async def download_document(doc_id: int, db: AsyncSession = Depends(get_db)):
     doc = await db.get(WorkerDocument, doc_id)
     if not doc:
@@ -192,7 +197,7 @@ async def download_document(doc_id: int, db: AsyncSession = Depends(get_db)):
     )
 
 
-@router.get("/{doc_id}", response_model=WorkerDocumentRead)
+@router.get("/{doc_id}", response_model=WorkerDocumentRead, dependencies=_R)
 async def get_document(doc_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(WorkerDocument)
@@ -209,6 +214,7 @@ async def get_document(doc_id: int, db: AsyncSession = Depends(get_db)):
     "/{doc_id}",
     response_model=WorkerDocumentRead,
     summary="Editar fecha de vencimiento y/o reemplazar archivo",
+    dependencies=_W,
 )
 async def edit_document(
     doc_id: int,
@@ -267,6 +273,7 @@ async def edit_document(
     "/{doc_id}/archive",
     status_code=status.HTTP_200_OK,
     summary="Archivar documento (soft-archive: excluye de acreditación activa)",
+    dependencies=_W,
 )
 async def archive_worker_document(doc_id: int, db: AsyncSession = Depends(get_db)):
     doc = await db.get(WorkerDocument, doc_id)
@@ -281,6 +288,7 @@ async def archive_worker_document(doc_id: int, db: AsyncSession = Depends(get_db
     "/{doc_id}/review",
     response_model=WorkerDocumentRead,
     summary="Aprobar o rechazar un documento (revisor)",
+    dependencies=_W,
 )
 async def review_document(
     doc_id: int,

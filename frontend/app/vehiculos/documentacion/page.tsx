@@ -47,8 +47,8 @@ export default function DocumentacionPage() {
   const [savingId, setSavingId] = useState<number | null>(null)
 
   const load = useCallback(async () => {
+    setLoading(true)
     try {
-      setLoading(true)
       const data = await api.getVehicleDocumentTypes(false)
       setTypes(data)
     } catch {
@@ -58,7 +58,12 @@ export default function DocumentacionPage() {
     }
   }, [])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    api.getVehicleDocumentTypes(false)
+      .then(data => setTypes(data))
+      .catch(() => setError('No se pudo cargar los tipos de documento.'))
+      .finally(() => setLoading(false))
+  }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()

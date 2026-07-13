@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import type { DocumentCategory } from '@/lib/types'
 import { api } from '@/lib/api'
+import { usePermissions } from '@/lib/permissions'
 
 export function CategoriesSection({
   categories,
@@ -19,6 +20,7 @@ export function CategoriesSection({
   const [error, setError] = useState('')
   const [deleting, setDeleting] = useState<number | null>(null)
   const [deleteErrors, setDeleteErrors] = useState<Record<number, string>>({})
+  const { canWrite } = usePermissions()
 
   const openCreate = () => {
     setEditing(null)
@@ -88,15 +90,17 @@ export function CategoriesSection({
             tenga documentos asignados, se mostrará un error de integridad.
           </p>
         </div>
-        <button
-          onClick={openCreate}
-          className="shrink-0 flex items-center gap-2 px-4 py-2 bg-violet-600 text-white text-sm font-semibold rounded-xl hover:bg-violet-700 transition-colors"
-        >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-          </svg>
-          Nueva Categoría
-        </button>
+        {canWrite('configuracion') && (
+          <button
+            onClick={openCreate}
+            className="shrink-0 flex items-center gap-2 px-4 py-2 bg-violet-600 text-white text-sm font-semibold rounded-xl hover:bg-violet-700 transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+            </svg>
+            Nueva Categoría
+          </button>
+        )}
       </div>
 
       {showForm && (
@@ -176,21 +180,23 @@ export function CategoriesSection({
                     <p className="text-xs text-red-600 mt-0.5">{deleteErrors[cat.id]}</p>
                   )}
                 </div>
-                <div className="flex items-center gap-2 shrink-0 ml-4">
-                  <button
-                    onClick={() => openEdit(cat)}
-                    className="px-3 py-1.5 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
-                  >
-                    Editar
-                  </button>
-                  <button
-                    onClick={() => handleDelete(cat)}
-                    disabled={deleting === cat.id}
-                    className="px-3 py-1.5 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors disabled:opacity-40"
-                  >
-                    {deleting === cat.id ? '…' : 'Eliminar'}
-                  </button>
-                </div>
+                {canWrite('configuracion') && (
+                  <div className="flex items-center gap-2 shrink-0 ml-4">
+                    <button
+                      onClick={() => openEdit(cat)}
+                      className="px-3 py-1.5 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+                    >
+                      Editar
+                    </button>
+                    <button
+                      onClick={() => handleDelete(cat)}
+                      disabled={deleting === cat.id}
+                      className="px-3 py-1.5 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors disabled:opacity-40"
+                    >
+                      {deleting === cat.id ? '…' : 'Eliminar'}
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
           </div>

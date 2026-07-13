@@ -15,6 +15,7 @@ import { DocRow } from './vehicle-profile/DocRow'
 import { MaintRow } from './vehicle-profile/MaintRow'
 import { TH } from './vehicle-profile/TH'
 import { stepColor, stepLabel } from './vehicle-profile/utils'
+import { usePermissions } from '@/lib/permissions'
 
 export function VehicleProfile({ vehicleId }: { vehicleId: number }) {
   const [profile, setProfile] = useState<VehicleFullProfile | null>(null)
@@ -23,6 +24,7 @@ export function VehicleProfile({ vehicleId }: { vehicleId: number }) {
   const [showNewMaint, setShowNewMaint] = useState(false)
   const [showAddAdditional, setShowAddAdditional] = useState(false)
   const [activeTab, setActiveTab] = useState<'docs' | 'maint'>('docs')
+  const { canWrite } = usePermissions()
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -38,7 +40,12 @@ export function VehicleProfile({ vehicleId }: { vehicleId: number }) {
     }
   }, [vehicleId])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    Promise.all([api.getVehicleFullProfile(vehicleId), api.getVehicleDocumentTypes(true)])
+      .then(([p, dts]) => { setProfile(p); setDocTypes(dts) })
+      .catch(() => { /* ignore */ })
+      .finally(() => setLoading(false))
+  }, [vehicleId])
 
   if (loading) {
     return (
@@ -235,16 +242,18 @@ export function VehicleProfile({ vehicleId }: { vehicleId: number }) {
                       <TrafficLightBadge status={profile.additional_doc_traffic_light} variant="pill" />
                     </div>
                   )}
-                  <button
-                    onClick={() => setShowAddAdditional(v => !v)}
-                    className={`ml-auto px-2 py-0.5 text-[10px] font-semibold rounded-none transition-colors ${
-                      showAddAdditional
-                        ? 'bg-slate-200 text-slate-600'
-                        : 'bg-[#003f7a] text-white hover:bg-[#005096]'
-                    }`}
-                  >
-                    {showAddAdditional ? 'Cancelar' : '+ Añadir Documento Adicional'}
-                  </button>
+                  {canWrite('vehiculos') && (
+                    <button
+                      onClick={() => setShowAddAdditional(v => !v)}
+                      className={`ml-auto px-2 py-0.5 text-[10px] font-semibold rounded-none transition-colors ${
+                        showAddAdditional
+                          ? 'bg-slate-200 text-slate-600'
+                          : 'bg-[#003f7a] text-white hover:bg-[#005096]'
+                      }`}
+                    >
+                      {showAddAdditional ? 'Cancelar' : '+ Añadir Documento Adicional'}
+                    </button>
+                  )}
                 </div>
 
                 {showAddAdditional && (
@@ -349,7 +358,7 @@ export function VehicleProfile({ vehicleId }: { vehicleId: number }) {
               <ActionBtn label="Config. de Alertas" icon={IcoBell} color="slate" href="/vehiculos/alertas" />
             </>
           )}
-          {activeTab === 'maint' && (
+          {activeTab === 'maint' && canWrite('vehiculos') && (
             <ActionBtn
               label={showNewMaint ? 'Cancelar nuevo' : 'Nuevo programa'}
               icon={showNewMaint ? IcoX : IcoPlus}
