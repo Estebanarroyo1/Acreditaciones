@@ -49,7 +49,7 @@ async def get_current_user(
             token,
             signing_key.key,
             algorithms=["RS256"],
-            audience=settings.ENTRA_CLIENT_ID,
+            audience=[settings.ENTRA_CLIENT_ID, f"api://{settings.ENTRA_CLIENT_ID}"],
             issuer=f"https://login.microsoftonline.com/{settings.ENTRA_TENANT_ID}/v2.0",
         )
     except jwt.ExpiredSignatureError:

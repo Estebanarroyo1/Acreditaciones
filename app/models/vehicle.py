@@ -1,7 +1,13 @@
-from sqlalchemy import String, Text, Integer, Boolean, Index
+from __future__ import annotations
+from typing import TYPE_CHECKING
+
+from sqlalchemy import String, Text, Integer, Boolean, Index, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin
+
+if TYPE_CHECKING:
+    from app.models.vehicle_service import VehicleService
 
 
 class Vehicle(Base, TimestampMixin):
@@ -25,10 +31,16 @@ class Vehicle(Base, TimestampMixin):
     tag_id: Mapped[str | None] = mapped_column(String(100))
     gps_id: Mapped[str | None] = mapped_column(String(100))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    vehicle_service_id: Mapped[int | None] = mapped_column(
+        ForeignKey("vehicle_services.id", ondelete="SET NULL"), nullable=True
+    )
 
     documents: Mapped[list["VehicleDocument"]] = relationship(
         back_populates="vehicle", cascade="all, delete-orphan"
     )
     maintenance_records: Mapped[list["VehicleMaintenance"]] = relationship(
         back_populates="vehicle", cascade="all, delete-orphan"
+    )
+    service: Mapped["VehicleService | None"] = relationship(
+        "VehicleService", back_populates="vehicles"
     )

@@ -4,6 +4,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.permissions import Module, PermissionLevel, require_module
 from app.db.session import get_db
 from app.models.vehicle import Vehicle
 from app.models.vehicle_document_type import VehicleDocumentType
@@ -15,6 +16,9 @@ from app.schemas.vehicle_service import (
 )
 
 router = APIRouter(prefix="/vehicle-services", tags=["vehicle-services"])
+
+_R = [Depends(require_module(Module.vehiculos, PermissionLevel.read))]
+_W = [Depends(require_module(Module.vehiculos, PermissionLevel.write))]
 
 
 async def _get_service_or_404(service_id: int, db: AsyncSession) -> VehicleService:
@@ -29,7 +33,7 @@ async def _get_service_or_404(service_id: int, db: AsyncSession) -> VehicleServi
     return svc
 
 
-@router.get("/", response_model=list[VehicleServiceRead])
+@router.get("/", response_model=list[VehicleServiceRead], dependencies=_R)
 async def list_vehicle_services(
     active_only: bool = False,
     db: AsyncSession = Depends(get_db),
@@ -41,7 +45,7 @@ async def list_vehicle_services(
     return result.scalars().all()
 
 
-@router.post("/", response_model=VehicleServiceRead, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=VehicleServiceRead, status_code=status.HTTP_201_CREATED, dependencies=_W)
 async def create_vehicle_service(
     payload: VehicleServiceCreate,
     db: AsyncSession = Depends(get_db),
@@ -74,12 +78,12 @@ async def create_vehicle_service(
     return result.scalar_one()
 
 
-@router.get("/{service_id}", response_model=VehicleServiceRead)
+@router.get("/{service_id}", response_model=VehicleServiceRead, dependencies=_R)
 async def get_vehicle_service(service_id: int, db: AsyncSession = Depends(get_db)):
     return await _get_service_or_404(service_id, db)
 
 
-@router.patch("/{service_id}", response_model=VehicleServiceRead)
+@router.patch("/{service_id}", response_model=VehicleServiceRead, dependencies=_W)
 async def update_vehicle_service(
     service_id: int,
     payload: VehicleServiceUpdate,
@@ -104,14 +108,14 @@ async def update_vehicle_service(
     return result.scalar_one()
 
 
-@router.delete("/{service_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{service_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=_W)
 async def delete_vehicle_service(service_id: int, db: AsyncSession = Depends(get_db)):
     svc = await _get_service_or_404(service_id, db)
     await db.delete(svc)
     await db.commit()
 
 
-@router.post("/{service_id}/document-types/{dt_id}", response_model=VehicleServiceRead)
+@router.post("/{service_id}/document-types/{dt_id}", response_model=VehicleServiceRead, dependencies=_W)
 async def add_document_type_to_service(
     service_id: int,
     dt_id: int,
@@ -132,7 +136,7 @@ async def add_document_type_to_service(
     return result.scalar_one()
 
 
-@router.delete("/{service_id}/document-types/{dt_id}", response_model=VehicleServiceRead)
+@router.delete("/{service_id}/document-types/{dt_id}", response_model=VehicleServiceRead, dependencies=_W)
 async def remove_document_type_from_service(
     service_id: int,
     dt_id: int,
@@ -149,7 +153,7 @@ async def remove_document_type_from_service(
     return result.scalar_one()
 
 
-@router.post("/{service_id}/vehicles/{vehicle_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/{service_id}/vehicles/{vehicle_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=_W)
 async def assign_vehicle_to_service(
     service_id: int,
     vehicle_id: int,
@@ -165,7 +169,7 @@ async def assign_vehicle_to_service(
     await db.commit()
 
 
-@router.delete("/{service_id}/vehicles/{vehicle_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{service_id}/vehicles/{vehicle_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=_W)
 async def unassign_vehicle_from_service(
     service_id: int,
     vehicle_id: int,

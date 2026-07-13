@@ -136,6 +136,15 @@ ADMIN_EMAILS=       # comma-separated; reciben is_admin=True al primer login
 AUTH_DISABLED=false # ⚠️ NUNCA true en producción
 ```
 
+### Configuración del App Registration en Azure
+La App Registration debe tener el scope `access_as_user` expuesto para que el frontend pueda solicitar tokens con audiencia `api://<CLIENT_ID>`:
+1. **Azure Portal → App Registrations → tu app → Expose an API**
+2. Establece el Application ID URI como `api://<CLIENT_ID>`
+3. Agrega un scope llamado `access_as_user` (quién puede consentir: Admins and users)
+4. **API permissions → Add permission → My APIs → selecciona tu app → `access_as_user`** y concede Admin consent
+
+**¿Por qué?** El frontend solicita el scope `api://<CLIENT_ID>/access_as_user` para que el `access_token` tenga `aud=api://<CLIENT_ID>`. El backend acepta como audiencia válida tanto `<CLIENT_ID>` como `api://<CLIENT_ID>` (ambos formatos que puede emitir Entra ID).
+
 ### Uso en endpoints futuros
 ```python
 # Solo autenticado:
