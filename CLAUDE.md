@@ -157,6 +157,63 @@ _: User = Depends(require_admin)
 _: User = Depends(require_module(Module.trabajadores, PermissionLevel.write))
 ```
 
+## Política de archivos permitidos (defensa XSS almacenado)
+
+Toda subida de documento (trabajadores **y** vehículos) pasa por una validación
+estricta antes de tocar el disco. Objetivo: impedir XSS almacenado vía archivos
+(p. ej. un `.html` con `<script>` renombrado a `.pdf`).
+
+### Lista blanca
+Definida en `app/core/config.py`:
+- `ALLOWED_UPLOAD_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".webp"}`
+- `EXTENSION_TO_MIME` — MIME canónico por extensión (única fuente de verdad)
+- `ALLOWED_MIME_TYPES` — MIME seguros para servir inline
+
+### Reglas de validación (`app/services/storage.py`)
+1. **Extensión:** si no está en `ALLOWED_UPLOAD_EXTENSIONS` → **422**.
+2. **Magic bytes:** `validate_upload(content, filename)` verifica la firma binaria
+   real contra la extensión declarada (sin dependencias externas):
+   `%PDF` · JPEG `FF D8 FF` · PNG `89 50 4E 47 0D 0A 1A 0A` · WebP `RIFF….WEBP`.
+   Si la firma no coincide → **422**.
+3. **MIME de confianza:** NUNCA se usa `file.content_type` del cliente. El MIME se
+   deriva de la firma validada y ese valor es el que se guarda en BD.
+4. La validación se ejecuta **temprano en el endpoint** (`validate_upload_head`,
+   lee solo el primer chunk) y de nuevo dentro de `save_upload`/`save_vehicle_upload`
+   (defensa en profundidad).
+
+### Tamaño y memoria (streaming)
+- `save_upload`/`save_vehicle_upload` persisten en **streaming** (chunks de 1 MB a
+  un archivo temporal), abortando con **413** apenas el acumulado supere
+  `MAX_UPLOAD_SIZE_MB`. Nunca se carga el archivo completo en RAM.
+- Los flujos que necesitan los bytes en memoria (IA) usan `read_upload_capped()`,
+  que acota la lectura al mismo límite antes de enviar nada a OpenAI.
+
+### Al servir archivos (view/download, ambos dominios)
+- `media_type` **siempre** desde `resolve_media_type()` (mapa validado), jamás el
+  MIME crudo del cliente.
+- Header `X-Content-Type-Options: nosniff` en toda respuesta de archivo.
+- Modo **inline** solo si el tipo está en la lista blanca; ante cualquier duda
+  (MIME no confiable, extensión desconocida) → `attachment` + `octet-stream`.
+
+### Auditoría de archivos existentes
+`scripts/audit_uploads.py` recorre `UPLOAD_DIR`, valida firmas y reporta
+sospechosos **sin borrar nada** (los archivos ya subidos son de confianza; no se
+requiere migración). Uso: `.venv\Scripts\python.exe -m scripts.audit_uploads`.
+
+## Endpoints de IA (/ai-scan) — endurecimiento
+
+Los endpoints que llaman a OpenAI (`/ai-scan` de worker y vehicle, y la validación
+IA en upload/edit) están protegidos:
+- **Límite de tamaño antes de OpenAI:** `read_upload_capped()` corta con 413 sin
+  cargar más que `MAX_UPLOAD_SIZE_MB` en RAM.
+- **Cliente único:** cada extractor (`worker_ai_extractor`, `vehicle_ai_extractor`)
+  crea un `AsyncOpenAI` una sola vez (lazy) con `timeout=30.0, max_retries=1`. Un
+  timeout se traduce a **504** ("El análisis del documento tardó demasiado"), no 500.
+- **Rate limiting:** `app/core/ratelimit.py` expone la dependencia
+  `rate_limit_ai_scan` — máx. `AI_SCAN_MAX_PER_MINUTE` (default 10) llamadas por
+  usuario/minuto; al exceder → **429**. Es un contador **en memoria por proceso**:
+  si se corre uvicorn con múltiples workers, migrar a Redis (contador compartido).
+
 ## Reglas para futuras sesiones
 
 1. **Migraciones:** Nunca editar archivos en `migrations/versions/` ya existentes. Siempre crear una nueva con `alembic revision --autogenerate`.
@@ -166,3 +223,4 @@ _: User = Depends(require_module(Module.trabajadores, PermissionLevel.write))
 5. **Variables de entorno:** `.env` nunca va al repo (está en `.gitignore`). Usar `.env.example` como plantilla. La clave `OPENAI_API_KEY` debe rotarse si quedó expuesta.
 6. **Diseño visual:** El sistema usa estilo SAP Fiori ERP — fondos blancos, tabs con `border-b-2 border-[#003f7a]`, tipografía densa (`text-[11px]`), sin dark mode.
 7. **Async everywhere:** Todos los servicios y endpoints son `async def`. No usar `.execute()` síncrono de SQLAlchemy.
+8. **Subida de archivos:** Toda subida nueva debe pasar por `validate_upload()` (lista blanca + magic bytes) y guardar el MIME derivado de la firma, nunca `file.content_type`. Al servir, usar `resolve_media_type()` + header `nosniff`. Ver "Política de archivos permitidos".

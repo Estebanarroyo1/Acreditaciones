@@ -7,7 +7,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from openai import APITimeoutError
+
 from app.core.permissions import Module, PermissionLevel, require_module
+from app.core.ratelimit import rate_limit_ai_scan
 from app.db.session import get_db
 from app.models.associations import (
     DocumentStatus,
@@ -17,7 +20,12 @@ from app.models.associations import (
 )
 from app.models.document_type import DocumentType
 from app.schemas.worker_document import WorkerDocumentRead, WorkerDocumentUpdate
-from app.services.storage import save_upload
+from app.services.storage import (
+    read_upload_capped,
+    resolve_media_type,
+    save_upload,
+    validate_upload_head,
+)
 from app.services.worker_documents import resolve_document_dates
 
 router = APIRouter(prefix="/worker-documents", tags=["worker-documents"])
@@ -26,7 +34,11 @@ _R = [Depends(require_module(Module.trabajadores, PermissionLevel.read))]
 _W = [Depends(require_module(Module.trabajadores, PermissionLevel.write))]
 
 
-@router.post("/ai-scan", summary="Analizar documento con IA y extraer fechas (sin guardar)", dependencies=_W)
+@router.post(
+    "/ai-scan",
+    summary="Analizar documento con IA y extraer fechas (sin guardar)",
+    dependencies=[*_W, Depends(rate_limit_ai_scan)],
+)
 async def ai_scan_worker_document(
     file: UploadFile = File(...),
     validity_days: int | None = Form(None),
@@ -37,9 +49,12 @@ async def ai_scan_worker_document(
     if not settings.OPENAI_API_KEY:
         raise HTTPException(status_code=503, detail="Servicio de IA no configurado.")
 
-    content = await file.read()
+    # Aplica el límite de tamaño ANTES de enviar nada a OpenAI.
+    content = await read_upload_capped(file)
     try:
         result = await extract_dates(content, file.content_type or "", file.filename or "")
+    except APITimeoutError:
+        raise HTTPException(status_code=504, detail="El análisis del documento tardó demasiado.")
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     except Exception as exc:
@@ -81,6 +96,11 @@ async def upload_document(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
 ):
+    # --- Validate file type (whitelist + magic bytes) BEFORE any AI/processing ---
+    # Lee solo el primer chunk (no carga el archivo entero en RAM). save_upload
+    # revalida y hace streaming a disco como defensa en profundidad.
+    await validate_upload_head(file)
+
     # --- Load and validate document type ---
     dt_result = await db.execute(
         select(DocumentType).where(
@@ -173,12 +193,23 @@ async def view_document(doc_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Documento no encontrado.")
     if not os.path.exists(doc.file_path):
         raise HTTPException(status_code=404, detail="Archivo no encontrado en el servidor.")
+    # media_type SIEMPRE desde nuestro mapa validado. Inline solo si el tipo
+    # está en la lista blanca; ante cualquier duda, forzar descarga.
+    media_type = resolve_media_type(doc.mime_type, doc.original_filename)
+    if media_type is None:
+        media_type = "application/octet-stream"
+        disposition = "attachment"
+    else:
+        disposition = "inline"
     return FileResponse(
         path=doc.file_path,
-        media_type=doc.mime_type or "application/octet-stream",
+        media_type=media_type,
         filename=doc.original_filename,
-        content_disposition_type="inline",
-        headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+        content_disposition_type=disposition,
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 
@@ -189,11 +220,13 @@ async def download_document(doc_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Documento no encontrado.")
     if not os.path.exists(doc.file_path):
         raise HTTPException(status_code=404, detail="Archivo no encontrado en el servidor.")
+    media_type = resolve_media_type(doc.mime_type, doc.original_filename) or "application/octet-stream"
     return FileResponse(
         path=doc.file_path,
-        media_type=doc.mime_type or "application/octet-stream",
+        media_type=media_type,
         filename=doc.original_filename,
         content_disposition_type="attachment",
+        headers={"X-Content-Type-Options": "nosniff"},
     )
 
 
@@ -232,6 +265,10 @@ async def edit_document(
     doc = result.scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Documento no encontrado.")
+
+    # Validate replacement file early (whitelist + magic bytes) before AI/processing.
+    if file is not None:
+        await validate_upload_head(file)
 
     dt_name = doc.document_type.name if doc.document_type else None
     effective_vd = doc.document_type.effective_validity_days if doc.document_type else None

@@ -7,13 +7,21 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from openai import APITimeoutError
+
 from app.core.permissions import Module, PermissionLevel, require_module
+from app.core.ratelimit import rate_limit_ai_scan
 from app.db.session import get_db
 from app.models.associations import DocumentStatus
 from app.models.vehicle_document import VehicleDocument
 from app.models.vehicle_document_type import VehicleDocumentType
 from app.schemas.vehicle_document import VehicleDocumentRead, VehicleDocumentReview
-from app.services.storage import save_vehicle_upload
+from app.services.storage import (
+    read_upload_capped,
+    resolve_media_type,
+    save_vehicle_upload,
+    validate_upload_head,
+)
 
 router = APIRouter(prefix="/vehicle-documents", tags=["vehicle-documents"])
 
@@ -21,7 +29,7 @@ _R = [Depends(require_module(Module.vehiculos, PermissionLevel.read))]
 _W = [Depends(require_module(Module.vehiculos, PermissionLevel.write))]
 
 
-@router.post("/ai-scan", dependencies=_W)
+@router.post("/ai-scan", dependencies=[*_W, Depends(rate_limit_ai_scan)])
 async def ai_scan_vehicle_document(file: UploadFile = File(...)):
     """Preview scan: extract dates and doc type without blocking validation."""
     from app.core.config import settings
@@ -30,11 +38,14 @@ async def ai_scan_vehicle_document(file: UploadFile = File(...)):
     if not settings.OPENAI_API_KEY:
         raise HTTPException(status_code=503, detail="Servicio de IA no configurado.")
 
-    content = await file.read()
+    # Aplica el límite de tamaño ANTES de enviar nada a OpenAI.
+    content = await read_upload_capped(file)
     try:
         result = await extract_and_validate(
             content, file.content_type or "", file.filename or ""
         )
+    except APITimeoutError:
+        raise HTTPException(status_code=504, detail="El análisis del documento tardó demasiado.")
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     except Exception as exc:
@@ -60,6 +71,10 @@ async def upload_vehicle_document(
 
     from app.core.config import settings
 
+    # --- Validate file type (whitelist + magic bytes) BEFORE any AI/processing ---
+    # Lee solo el primer chunk; save_vehicle_upload revalida y hace streaming.
+    await validate_upload_head(file)
+
     vdt = await db.get(VehicleDocumentType, vehicle_document_type_id)
     if not vdt or not vdt.is_active:
         raise HTTPException(status_code=404, detail="Tipo de documento no encontrado.")
@@ -81,11 +96,14 @@ async def upload_vehicle_document(
     if settings.OPENAI_API_KEY:
         from app.services.vehicle_ai_extractor import extract_and_validate
 
-        content = await file.read()
+        # Aplica el límite de tamaño ANTES de enviar nada a OpenAI.
+        content = await read_upload_capped(file)
         try:
             ai = await extract_and_validate(
                 content, file.content_type or "", file.filename or "", vdt.name
             )
+        except APITimeoutError:
+            raise HTTPException(status_code=504, detail="El análisis del documento tardó demasiado.")
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
         except Exception as exc:
@@ -164,11 +182,20 @@ async def view_vehicle_document(doc_id: int, db: AsyncSession = Depends(get_db))
         raise HTTPException(status_code=404, detail="Documento no encontrado.")
     if not os.path.exists(doc.file_path):
         raise HTTPException(status_code=404, detail="Archivo no encontrado en el servidor.")
+    # media_type SIEMPRE desde nuestro mapa validado. Inline solo si el tipo
+    # está en la lista blanca; ante cualquier duda, forzar descarga.
+    media_type = resolve_media_type(doc.mime_type, doc.original_filename)
+    if media_type is None:
+        media_type = "application/octet-stream"
+        disposition = "attachment"
+    else:
+        disposition = "inline"
     return FileResponse(
         path=doc.file_path,
-        media_type=doc.mime_type or "application/octet-stream",
+        media_type=media_type,
         filename=doc.original_filename,
-        content_disposition_type="inline",
+        content_disposition_type=disposition,
+        headers={"X-Content-Type-Options": "nosniff"},
     )
 
 
@@ -179,11 +206,13 @@ async def download_vehicle_document(doc_id: int, db: AsyncSession = Depends(get_
         raise HTTPException(status_code=404, detail="Documento no encontrado.")
     if not os.path.exists(doc.file_path):
         raise HTTPException(status_code=404, detail="Archivo no encontrado en el servidor.")
+    media_type = resolve_media_type(doc.mime_type, doc.original_filename) or "application/octet-stream"
     return FileResponse(
         path=doc.file_path,
-        media_type=doc.mime_type or "application/octet-stream",
+        media_type=media_type,
         filename=doc.original_filename,
         content_disposition_type="attachment",
+        headers={"X-Content-Type-Options": "nosniff"},
     )
 
 
@@ -232,18 +261,24 @@ async def edit_vehicle_document(
         )
 
     if file is not None:
+        # Validate replacement file early (whitelist + magic bytes) before AI.
+        await validate_upload_head(file)
+
         # ── AI validation (Escudo de Tipo + Escudo de Vigencia) ──────────────
         from app.core.config import settings
 
         if settings.OPENAI_API_KEY:
             from app.services.vehicle_ai_extractor import extract_and_validate
 
-            content = await file.read()
+            # Aplica el límite de tamaño ANTES de enviar nada a OpenAI.
+            content = await read_upload_capped(file)
             try:
                 ai = await extract_and_validate(
                     content, file.content_type or "", file.filename or "",
                     doc.vehicle_document_type.name,
                 )
+            except APITimeoutError:
+                raise HTTPException(status_code=504, detail="El análisis del documento tardó demasiado.")
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc))
             except Exception as exc:

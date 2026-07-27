@@ -5,6 +5,22 @@ from openai import AsyncOpenAI, BadRequestError
 
 from app.core.config import settings
 
+# Cliente único a nivel de módulo (creado una sola vez, de forma perezosa para
+# no fallar al importar cuando OPENAI_API_KEY está vacío). timeout=30s y
+# max_retries=1 evitan que una llamada colgada bloquee el request indefinidamente.
+_client: AsyncOpenAI | None = None
+
+
+def _get_client() -> AsyncOpenAI:
+    global _client
+    if _client is None:
+        _client = AsyncOpenAI(
+            api_key=settings.OPENAI_API_KEY,
+            timeout=30.0,
+            max_retries=1,
+        )
+    return _client
+
 
 async def _to_image(content: bytes, mime: str, filename: str) -> tuple[bytes, str]:
     """Convert PDF to PNG or validate image MIME. Returns (content, mime)."""
@@ -81,7 +97,7 @@ async def extract_and_validate(
         )
         user_text = "Analiza este documento y extrae las fechas y el tipo de documento."
 
-    client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+    client = _get_client()
     try:
         response = await client.chat.completions.create(
             model=settings.OPENAI_MODEL,

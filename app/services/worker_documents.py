@@ -47,8 +47,13 @@ async def resolve_document_dates(
     parsed_issue, parsed_expiry = _parse_iso_dates(issue_date_str, expiry_date_str)
 
     if file is not None and settings.OPENAI_API_KEY:
+        from openai import APITimeoutError
+
+        from app.services.storage import read_upload_capped
         from app.services.worker_ai_extractor import extract_dates
-        content = await file.read()
+
+        # Aplica el límite de tamaño ANTES de enviar nada a OpenAI.
+        content = await read_upload_capped(file)
         try:
             ai = await extract_dates(
                 content, file.content_type or "", file.filename or "", doc_type_name
@@ -63,6 +68,11 @@ async def resolve_document_dates(
                     parsed_expiry = date.fromisoformat(ai["expiry_date"])
                 except ValueError:
                     pass
+        except APITimeoutError:
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail="El análisis del documento tardó demasiado.",
+            )
         except Exception:
             pass  # AI failure is non-blocking
         await file.seek(0)

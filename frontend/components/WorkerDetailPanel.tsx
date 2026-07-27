@@ -111,7 +111,7 @@ function EditForm({
             ref={inputRef}
             type="file"
             className="hidden"
-            accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+            accept=".pdf,.jpg,.jpeg,.png"
             onChange={(e) => setFile(e.target.files?.[0] ?? null)}
           />
           {file && (
@@ -204,7 +204,7 @@ function UploadForm({
           </svg>
           {file ? file.name : 'Adjuntar archivo'}
         </button>
-        <input ref={inputRef} type="file" className="hidden" onChange={(e) => setFile(e.target.files?.[0] ?? null)} accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" />
+        <input ref={inputRef} type="file" className="hidden" onChange={(e) => setFile(e.target.files?.[0] ?? null)} accept=".pdf,.jpg,.jpeg,.png" />
         <div className="flex items-center gap-1.5">
           <label className="text-[11px] text-slate-400 shrink-0">Emisión:</label>
           <input

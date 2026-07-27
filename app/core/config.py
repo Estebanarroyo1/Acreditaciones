@@ -1,6 +1,27 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+# ── Política de archivos permitidos (defensa contra XSS almacenado vía upload) ──
+# Lista blanca de extensiones aceptadas en cualquier subida de documento
+# (trabajadores y vehículos). Cualquier extensión fuera de este conjunto se
+# rechaza con 422 antes de tocar el disco.
+ALLOWED_UPLOAD_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".webp"}
+
+# MIME canónico derivado de la extensión ya validada. NUNCA se confía en el
+# Content-Type enviado por el cliente: este es el valor que se guarda en BD y
+# el único que se usa al servir el archivo.
+EXTENSION_TO_MIME = {
+    ".pdf": "application/pdf",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+}
+
+# Conjunto de MIME que consideramos seguros para servir inline.
+ALLOWED_MIME_TYPES = set(EXTENSION_TO_MIME.values())
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
@@ -46,6 +67,8 @@ class Settings(BaseSettings):
     # OpenAI — leave empty to disable AI extraction
     OPENAI_API_KEY: str = ""
     OPENAI_MODEL: str = "gpt-4o"
+    # Rate limit para los endpoints /ai-scan: máximo de llamadas por usuario/minuto.
+    AI_SCAN_MAX_PER_MINUTE: int = 10
 
     # Microsoft Entra ID (M365) authentication
     ENTRA_TENANT_ID: str = ""
