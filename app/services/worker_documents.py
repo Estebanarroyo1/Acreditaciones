@@ -7,9 +7,13 @@ Steps in order:
   3. validity_days last-resort fallback (issue_date + validity_days)
   4. Fail-fast: block already-expired documents (raise 400)
 """
+
+import logging
 from datetime import date, timedelta
 
 from fastapi import HTTPException, UploadFile, status
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_iso_dates(
@@ -74,7 +78,12 @@ async def resolve_document_dates(
                 detail="El análisis del documento tardó demasiado.",
             )
         except Exception:
-            pass  # AI failure is non-blocking
+            # AI failure is non-blocking: continue without the extracted dates.
+            logger.warning(
+                "AI date extraction failed for %s; continuing without it.",
+                file.filename or "<unknown>",
+                exc_info=True,
+            )
         await file.seek(0)
 
     if parsed_expiry is None and effective_validity_days and parsed_issue:

@@ -13,14 +13,6 @@ import type {
 import { api } from '@/lib/api'
 import { TrafficLightBadge } from './TrafficLightBadge'
 
-const CATEGORY_LABELS: Record<string, string> = {
-  medical: 'Médico',
-  background: 'Antecedentes',
-  certification: 'Certificación',
-  training: 'Capacitación',
-  legal: 'Legal',
-  other: 'Otro',
-}
 
 // ── Assigned worker row ────────────────────────────────────────────────────
 function AssignedWorkerRow({

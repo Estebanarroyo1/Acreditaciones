@@ -13,7 +13,9 @@ Priority cascade for the alert percentage:
     2. DocumentType.alert_percentage_override  (type-level override)
     3. SystemSettings global_alert_percentage  (global fallback)
 """
+
 import json
+import logging
 from datetime import date
 from typing import TYPE_CHECKING
 
@@ -26,6 +28,8 @@ from app.models.system_settings import SystemSetting
 if TYPE_CHECKING:
     from app.models.associations import WorkerDocument
 
+logger = logging.getLogger(__name__)
+
 _DEFAULT_PCT = 20
 _ALERT_KEY = "global_alert_percentage"
 
@@ -36,8 +40,13 @@ async def load_global_pct(db: AsyncSession) -> int:
     if setting:
         try:
             return int(json.loads(setting.value))
-        except Exception:
-            pass
+        except (json.JSONDecodeError, ValueError, TypeError):
+            logger.warning(
+                "Invalid %s setting value %r; falling back to default %d.",
+                _ALERT_KEY,
+                setting.value,
+                _DEFAULT_PCT,
+            )
     return _DEFAULT_PCT
 
 

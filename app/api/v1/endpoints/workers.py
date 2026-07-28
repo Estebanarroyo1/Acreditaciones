@@ -6,30 +6,30 @@ from datetime import datetime, timezone
 from typing import Literal
 
 import openpyxl
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 from fastapi.responses import StreamingResponse
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.api.pagination import Pagination, pagination_params, set_total_count
 from app.core.permissions import Module, PermissionLevel, require_module
 from app.db.session import get_db
-from app.models.worker import Worker, WorkLocation
 from app.models.associations import DocumentStatus, WorkerDocument, WorkerProject
 from app.models.project import Project
-from app.schemas.worker import WorkerCreate, WorkerUpdate, WorkerRead, BulkUploadResult
+from app.models.worker import Worker, WorkLocation
 from app.schemas.associations import WorkerProjectRead
+from app.schemas.worker import BulkUploadResult, WorkerCreate, WorkerRead, WorkerUpdate
 from app.schemas.worker_profile import WorkerFullProfile
-from app.services.worker_profile import get_worker_full_profile
 from app.services.accreditation import (
     get_worker_base_requirements_gaps,
     get_workers_base_requirements_map,
 )
-from app.services.workers import process_bulk_upload
 from app.services.storage import delete_file
-from app.api.pagination import Pagination, pagination_params, set_total_count
+from app.services.worker_profile import get_worker_full_profile
+from app.services.workers import process_bulk_upload
 
 router = APIRouter(prefix="/workers", tags=["workers"])
 
@@ -52,12 +52,16 @@ async def list_workers(
     db: AsyncSession = Depends(get_db),
 ):
     location_enum = (
-        WorkLocation.PLANTA if location == "planta"
-        else WorkLocation.OBRA if location == "obra"
+        WorkLocation.PLANTA
+        if location == "planta"
+        else WorkLocation.OBRA
+        if location == "obra"
         else None
     )
     base = select(Worker).where(Worker.is_active == (status == "active"))
-    count_q = select(func.count()).select_from(Worker).where(Worker.is_active == (status == "active"))
+    count_q = (
+        select(func.count()).select_from(Worker).where(Worker.is_active == (status == "active"))
+    )
     if location_enum is not None:
         base = base.where(Worker.work_location == location_enum)
         count_q = count_q.where(Worker.work_location == location_enum)
@@ -94,9 +98,7 @@ async def create_worker(payload: WorkerCreate, db: AsyncSession = Depends(get_db
 
 
 @router.get("/{worker_id}/full-profile", response_model=WorkerFullProfile, dependencies=_R)
-async def get_worker_full_profile_endpoint(
-    worker_id: int, db: AsyncSession = Depends(get_db)
-):
+async def get_worker_full_profile_endpoint(worker_id: int, db: AsyncSession = Depends(get_db)):
     profile = await get_worker_full_profile(worker_id, db)
     if not profile:
         raise HTTPException(status_code=404, detail="Trabajador no encontrado.")
@@ -181,13 +183,23 @@ async def download_worker_documents_zip(
     )
 
 
-@router.get("/bulk-template", summary="Descargar plantilla Excel para carga masiva", dependencies=_R)
+@router.get(
+    "/bulk-template", summary="Descargar plantilla Excel para carga masiva", dependencies=_R
+)
 async def download_bulk_template():
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Trabajadores"
 
-    headers = ["Nombre", "Apellido", "RUT_DNI", "Ubicacion", "Email", "Telefono", "Fecha_Nacimiento"]
+    headers = [
+        "Nombre",
+        "Apellido",
+        "RUT_DNI",
+        "Ubicacion",
+        "Email",
+        "Telefono",
+        "Fecha_Nacimiento",
+    ]
     required = {"Nombre", "Apellido", "RUT_DNI", "Ubicacion"}
 
     header_fill = PatternFill(start_color="1E293B", end_color="1E293B", fill_type="solid")
@@ -235,7 +247,6 @@ async def download_bulk_template():
     # openpyxl descarta el estilo de celdas vacías al serializar, por eso escribimos
     # una celda "marcadora" con valor None y luego la limpiamos: así el estilo queda
     # anclado en la celda y Excel lo aplica cuando el usuario escribe una fecha.
-    date_col_letter = openpyxl.utils.get_column_letter(7)
     for row in range(3, 501):
         c = ws.cell(row=row, column=7)
         c.number_format = "DD/MM/YYYY"
@@ -247,10 +258,16 @@ async def download_bulk_template():
         ("", False),
         ("1. Los campos Nombre, Apellido, RUT_DNI y Ubicacion son OBLIGATORIOS.", False),
         ("2. Ubication debe ser exactamente 'Planta' o 'Obra' (con mayúscula inicial).", False),
-        ("3. La fila 2 de la hoja 'Trabajadores' es solo un ejemplo/guía — elimínela antes de subir.", False),
+        (
+            "3. La fila 2 de la hoja 'Trabajadores' es solo un ejemplo/guía — elimínela antes de subir.",
+            False,
+        ),
         ("4. El RUT/DNI debe ser único; filas con RUT duplicado serán ignoradas.", False),
         ("5. El formato de Fecha_Nacimiento es DD/MM/AAAA (ej: 15/03/1990).", False),
-        ("6. Los datos comienzan desde la fila 3 en adelante (fila 1 = encabezados, fila 2 = guía).", False),
+        (
+            "6. Los datos comienzan desde la fila 3 en adelante (fila 1 = encabezados, fila 2 = guía).",
+            False,
+        ),
     ]
     for row_idx, (text, bold) in enumerate(instructions, start=1):
         cell = note_ws.cell(row=row_idx, column=1, value=text)
@@ -299,9 +316,7 @@ async def get_worker(worker_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.patch("/{worker_id}", response_model=WorkerRead, dependencies=_W)
-async def update_worker(
-    worker_id: int, payload: WorkerUpdate, db: AsyncSession = Depends(get_db)
-):
+async def update_worker(worker_id: int, payload: WorkerUpdate, db: AsyncSession = Depends(get_db)):
     worker = await db.get(Worker, worker_id)
     if not worker:
         raise HTTPException(status_code=404, detail="Trabajador no encontrado.")
