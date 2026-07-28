@@ -1,11 +1,16 @@
-from datetime import date, timedelta, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import or_, select
-from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.models.associations import ProjectDocumentType, WorkerDocument, DocumentStatus, WorkerProject
-from app.models.document_type import DocumentType
+from app.models.associations import (
+    DocumentStatus,
+    ProjectDocumentType,
+    WorkerDocument,
+    WorkerProject,
+)
+from app.models.document_type import ACHS_VALIDITY_DAYS, DocumentType
 from app.models.worker import Worker, WorkLocation
 from app.schemas.accreditation import (
     AccreditationResponse,
@@ -15,8 +20,8 @@ from app.schemas.accreditation import (
     TrafficLight,
     WorkerGlobalStatus,
 )
-from app.models.document_type import ACHS_VALIDITY_DAYS
-from app.services.alert_rules import load_global_pct, effective_pct, is_expiring_soon
+from app.services.alert_rules import effective_pct, is_expiring_soon, load_global_pct
+from app.services.traffic import worst_traffic_light
 
 _INVALID = (DocumentStatus.REJECTED,)
 _PENDING_REVIEW = frozenset({DocumentStatus.PENDING, DocumentStatus.UPLOADED})
@@ -28,8 +33,9 @@ async def get_worker_base_requirements_gaps(worker_id: int, db: AsyncSession) ->
     NO tiene al día. Lista vacía == cumple todos los requisitos base.
     """
     global_result = await db.execute(
-        select(DocumentType)
-        .where(DocumentType.is_global_base_requirement == True, DocumentType.is_active == True)
+        select(DocumentType).where(
+            DocumentType.is_global_base_requirement == True, DocumentType.is_active == True
+        )
     )
     global_doc_types = global_result.scalars().all()
     if not global_doc_types:
@@ -55,7 +61,11 @@ async def get_worker_base_requirements_gaps(worker_id: int, db: AsyncSession) ->
         if doc is None or doc.status in _PENDING_REVIEW:
             gaps.append(dt.name)
         else:
-            eff_exp = (doc.issue_date + timedelta(days=ACHS_VALIDITY_DAYS)) if (dt.is_achs and doc.issue_date) else doc.expiry_date
+            eff_exp = (
+                (doc.issue_date + timedelta(days=ACHS_VALIDITY_DAYS))
+                if (dt.is_achs and doc.issue_date)
+                else doc.expiry_date
+            )
             if eff_exp and eff_exp < today:
                 gaps.append(dt.name)
     return gaps
@@ -67,8 +77,9 @@ async def get_workers_base_requirements_map(db: AsyncSession) -> dict[int, bool]
     worker_ids = workers_result.scalars().all()
 
     global_result = await db.execute(
-        select(DocumentType)
-        .where(DocumentType.is_global_base_requirement == True, DocumentType.is_active == True)
+        select(DocumentType).where(
+            DocumentType.is_global_base_requirement == True, DocumentType.is_active == True
+        )
     )
     global_dt_ids = [dt.id for dt in global_result.scalars().all()]
     if not global_dt_ids:
@@ -114,17 +125,27 @@ def _classify_doc(
     cat_name = dt.category.name if dt.category else ""
     if doc is None:
         return DocumentCheck(
-            document_type_id=dt.id, document_type_name=dt.name,
-            category=cat_name, is_mandatory=is_mandatory, is_global=is_global,
+            document_type_id=dt.id,
+            document_type_name=dt.name,
+            category=cat_name,
+            is_mandatory=is_mandatory,
+            is_global=is_global,
             check_status=DocumentCheckStatus.MISSING,
-            worker_document_id=None, expiry_date=None, days_until_expiry=None,
+            worker_document_id=None,
+            expiry_date=None,
+            days_until_expiry=None,
         )
     if doc.status in _PENDING_REVIEW:
         return DocumentCheck(
-            document_type_id=dt.id, document_type_name=dt.name,
-            category=cat_name, is_mandatory=is_mandatory, is_global=is_global,
+            document_type_id=dt.id,
+            document_type_name=dt.name,
+            category=cat_name,
+            is_mandatory=is_mandatory,
+            is_global=is_global,
             check_status=DocumentCheckStatus.PENDING_REVIEW,
-            worker_document_id=doc.id, expiry_date=None, days_until_expiry=None,
+            worker_document_id=doc.id,
+            expiry_date=None,
+            days_until_expiry=None,
         )
 
     evd = dt.effective_validity_days
@@ -140,18 +161,26 @@ def _classify_doc(
         if days_until_expiry < 0:
             check_status = DocumentCheckStatus.EXPIRED
         elif is_expiring_soon(
-            expiry_date, doc.issue_date, dt.effective_validity_days,
-            effective_pct(doc, dt, global_pct), today,
+            expiry_date,
+            doc.issue_date,
+            dt.effective_validity_days,
+            effective_pct(doc, dt, global_pct),
+            today,
         ):
             check_status = DocumentCheckStatus.EXPIRING_SOON
         else:
             check_status = DocumentCheckStatus.OK
 
     return DocumentCheck(
-        document_type_id=dt.id, document_type_name=dt.name,
-        category=cat_name, is_mandatory=is_mandatory, is_global=is_global,
-        check_status=check_status, worker_document_id=doc.id,
-        expiry_date=expiry_date, days_until_expiry=days_until_expiry,
+        document_type_id=dt.id,
+        document_type_name=dt.name,
+        category=cat_name,
+        is_mandatory=is_mandatory,
+        is_global=is_global,
+        check_status=check_status,
+        worker_document_id=doc.id,
+        expiry_date=expiry_date,
+        days_until_expiry=days_until_expiry,
     )
 
 
@@ -169,11 +198,11 @@ async def evaluate_accreditation(
         .options(selectinload(ProjectDocumentType.document_type))
     )
     proj_requirements = proj_result.scalars().all()
-    proj_dt_ids = {r.document_type_id for r in proj_requirements}
 
     global_result = await db.execute(
-        select(DocumentType)
-        .where(DocumentType.is_global_base_requirement == True, DocumentType.is_active == True)
+        select(DocumentType).where(
+            DocumentType.is_global_base_requirement == True, DocumentType.is_active == True
+        )
     )
     global_doc_types = global_result.scalars().all()
 
@@ -218,8 +247,16 @@ async def evaluate_accreditation(
         checks.append(_classify_doc(doc, dt, req.is_mandatory, False, today, global_pct))
 
     mandatory = [c for c in checks if c.is_mandatory]
-    bad  = [c for c in mandatory if c.check_status in (DocumentCheckStatus.MISSING, DocumentCheckStatus.EXPIRED)]
-    warn = [c for c in mandatory if c.check_status in (DocumentCheckStatus.EXPIRING_SOON, DocumentCheckStatus.PENDING_REVIEW)]
+    bad = [
+        c
+        for c in mandatory
+        if c.check_status in (DocumentCheckStatus.MISSING, DocumentCheckStatus.EXPIRED)
+    ]
+    warn = [
+        c
+        for c in mandatory
+        if c.check_status in (DocumentCheckStatus.EXPIRING_SOON, DocumentCheckStatus.PENDING_REVIEW)
+    ]
 
     if bad:
         light = TrafficLight.RED
@@ -258,14 +295,9 @@ async def get_workers_global_status(
     query = select(Worker).where(Worker.is_active == (status == "active"))
     if location is not None:
         query = query.where(Worker.work_location == location)
-    query = (
-        query
-        .options(
-            selectinload(Worker.project_assignments)
-            .selectinload(WorkerProject.project)
-        )
-        .order_by(Worker.last_name, Worker.first_name, Worker.id)
-    )
+    query = query.options(
+        selectinload(Worker.project_assignments).selectinload(WorkerProject.project)
+    ).order_by(Worker.last_name, Worker.first_name, Worker.id)
     if limit is not None:
         query = query.limit(limit).offset(offset or 0)
     workers_result = await db.execute(query)
@@ -283,8 +315,9 @@ async def get_workers_global_status(
 
     # Query 3: global base doc types (full objects for override lookup)
     global_result = await db.execute(
-        select(DocumentType)
-        .where(DocumentType.is_global_base_requirement == True, DocumentType.is_active == True)
+        select(DocumentType).where(
+            DocumentType.is_global_base_requirement == True, DocumentType.is_active == True
+        )
     )
     global_doc_types = global_result.scalars().all()
     global_dt_map: dict[int, DocumentType] = {dt.id: dt for dt in global_doc_types}
@@ -314,9 +347,7 @@ async def get_workers_global_status(
         dt_map.setdefault(dt.id, dt)
     extra_ids = all_req_dt_ids - global_dt_ids - achs_dt_ids
     if extra_ids:
-        extra_result = await db.execute(
-            select(DocumentType).where(DocumentType.id.in_(extra_ids))
-        )
+        extra_result = await db.execute(select(DocumentType).where(DocumentType.id.in_(extra_ids)))
         for dt in extra_result.scalars().all():
             dt_map[dt.id] = dt
 
@@ -336,14 +367,10 @@ async def get_workers_global_status(
 
     # Mejor doc por (worker, dt_id) para cada semáforo, buscando en TODOS los proyectos
     # (incluyendo archivados) para no perder docs subidos en contextos anteriores.
-    def _best_across_projects(
-        store: dict, d_id: int, w_id: int, doc: WorkerDocument
-    ) -> None:
+    def _best_across_projects(store: dict, d_id: int, w_id: int, doc: WorkerDocument) -> None:
         key = (w_id, d_id)
         ex = store.get(key)
-        if ex is None or (
-            doc.upload_date and ex.upload_date and doc.upload_date > ex.upload_date
-        ):
+        if ex is None or (doc.upload_date and ex.upload_date and doc.upload_date > ex.upload_date):
             store[key] = doc
 
     global_best_doc: dict[tuple[int, int], WorkerDocument] = {}
@@ -355,25 +382,32 @@ async def get_workers_global_status(
             _best_across_projects(achs_best_doc, d_id, w_id, doc)
 
     def _doc_light(doc: WorkerDocument | None, dt: DocumentType) -> TrafficLight:
+        # DECISIÓN DE NEGOCIO (pendiente de unificar — ver CLAUDE.md):
+        # Trabajadores calculan EXPIRING_SOON por PORCENTAJE de la vida útil del
+        # documento (is_expiring_soon + effective_pct), mientras que vehículos lo
+        # hacen por un umbral de DÍAS FIJOS (_evaluate_doc/_effective_alert_days
+        # en vehicle_accreditation.py). Esa asimetría NO se unificó a propósito;
+        # podría ser intencional. El semáforo (peor de una lista) sí se unificó
+        # en app/services/traffic.py; la regla de umbral no.
         if doc is None:
             return TrafficLight.RED
         if doc.status in _PENDING_REVIEW:
             return TrafficLight.YELLOW
         _evd2 = dt.effective_validity_days
-        eff_exp = (doc.issue_date + timedelta(days=_evd2)) if (_evd2 and doc.issue_date) else doc.expiry_date
+        eff_exp = (
+            (doc.issue_date + timedelta(days=_evd2))
+            if (_evd2 and doc.issue_date)
+            else doc.expiry_date
+        )
         if eff_exp and eff_exp < today:
             return TrafficLight.RED
         if eff_exp and is_expiring_soon(
-            eff_exp, doc.issue_date, dt.effective_validity_days,
-            effective_pct(doc, dt, global_pct), today,
+            eff_exp,
+            doc.issue_date,
+            dt.effective_validity_days,
+            effective_pct(doc, dt, global_pct),
+            today,
         ):
-            return TrafficLight.YELLOW
-        return TrafficLight.GREEN
-
-    def _worst(lights: set[TrafficLight]) -> TrafficLight:
-        if TrafficLight.RED in lights:
-            return TrafficLight.RED
-        if TrafficLight.YELLOW in lights:
             return TrafficLight.YELLOW
         return TrafficLight.GREEN
 
@@ -390,7 +424,7 @@ async def get_workers_global_status(
                 continue
             doc = global_best_doc.get((worker_id, dt_id))
             lights.add(_doc_light(doc, dt))
-        return _worst(lights)
+        return worst_traffic_light(lights, default=TrafficLight.GREEN)
 
     def _achs_status(worker_id: int) -> TrafficLight | None:
         """Peor semáforo de los exámenes ACHS del trabajador. None si no hay tipos ACHS."""
@@ -404,26 +438,38 @@ async def get_workers_global_status(
                 continue
             doc = achs_best_doc.get((worker_id, dt_id))
             lights.add(_doc_light(doc, dt))
-        return _worst(lights)
+        return worst_traffic_light(lights, default=TrafficLight.GREEN)
 
     output: list[WorkerGlobalStatus] = []
     for worker in workers:
-        active = [a for a in worker.project_assignments if a.is_active and a.project and a.project.is_active]
+        active = [
+            a
+            for a in worker.project_assignments
+            if a.is_active and a.project and a.project.is_active
+        ]
 
         g_status = _base_status(worker.id)
         a_status = _achs_status(worker.id)
 
         if not active:
-            output.append(WorkerGlobalStatus(
-                worker_id=worker.id, first_name=worker.first_name,
-                last_name=worker.last_name, dni=worker.dni,
-                email=worker.email, phone=worker.phone,
-                work_location=worker.work_location,
-                is_active=worker.is_active, assigned_projects=0,
-                global_traffic_light=None, project_statuses=[],
-                global_status=g_status, project_status=None,
-                achs_status=a_status,
-            ))
+            output.append(
+                WorkerGlobalStatus(
+                    worker_id=worker.id,
+                    first_name=worker.first_name,
+                    last_name=worker.last_name,
+                    dni=worker.dni,
+                    email=worker.email,
+                    phone=worker.phone,
+                    work_location=worker.work_location,
+                    is_active=worker.is_active,
+                    assigned_projects=0,
+                    global_traffic_light=None,
+                    project_statuses=[],
+                    global_status=g_status,
+                    project_status=None,
+                    achs_status=a_status,
+                )
+            )
             continue
 
         project_lights: list[ProjectTrafficLight] = []
@@ -451,13 +497,15 @@ async def get_workers_global_status(
                     if lgt == TrafficLight.RED:
                         break
 
-                p_light = _worst(lights_seen)
+                p_light = worst_traffic_light(lights_seen, default=TrafficLight.GREEN)
 
-            project_lights.append(ProjectTrafficLight(
-                project_id=p_id,
-                project_name=assgn.project.name if assgn.project else f"Proyecto {p_id}",
-                traffic_light=p_light,
-            ))
+            project_lights.append(
+                ProjectTrafficLight(
+                    project_id=p_id,
+                    project_name=assgn.project.name if assgn.project else f"Proyecto {p_id}",
+                    traffic_light=p_light,
+                )
+            )
 
             # Collect project-specific reqs (exclude global base)
             p_specific = required.get(p_id, set()) - global_dt_ids
@@ -470,20 +518,32 @@ async def get_workers_global_status(
                 doc = latest.get((worker.id, p_id, dt_id)) or latest.get((worker.id, None, dt_id))
                 proj_spec_lights.add(_doc_light(doc, dt))
 
-        global_light = _worst({pl.traffic_light for pl in project_lights})
-        p_status = _worst(proj_spec_lights) if has_specific_reqs else TrafficLight.GREEN
+        global_light = worst_traffic_light(
+            {pl.traffic_light for pl in project_lights}, default=TrafficLight.GREEN
+        )
+        p_status = (
+            worst_traffic_light(proj_spec_lights, default=TrafficLight.GREEN)
+            if has_specific_reqs
+            else TrafficLight.GREEN
+        )
 
-        output.append(WorkerGlobalStatus(
-            worker_id=worker.id, first_name=worker.first_name,
-            last_name=worker.last_name, dni=worker.dni,
-            email=worker.email, phone=worker.phone,
-            work_location=worker.work_location,
-            is_active=worker.is_active, assigned_projects=len(active),
-            global_traffic_light=global_light,
-            project_statuses=project_lights,
-            global_status=g_status,
-            project_status=p_status,
-            achs_status=a_status,
-        ))
+        output.append(
+            WorkerGlobalStatus(
+                worker_id=worker.id,
+                first_name=worker.first_name,
+                last_name=worker.last_name,
+                dni=worker.dni,
+                email=worker.email,
+                phone=worker.phone,
+                work_location=worker.work_location,
+                is_active=worker.is_active,
+                assigned_projects=len(active),
+                global_traffic_light=global_light,
+                project_statuses=project_lights,
+                global_status=g_status,
+                project_status=p_status,
+                achs_status=a_status,
+            )
+        )
 
     return output

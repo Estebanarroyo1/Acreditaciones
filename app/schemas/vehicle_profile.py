@@ -1,11 +1,16 @@
-from typing import Optional, Literal
+from typing import Literal, Optional
+
 from pydantic import BaseModel
 
 from app.models.vehicle_maintenance import MeasurementUnit
 
+# TrafficLight canónico compartido con el módulo de trabajadores (Enum str).
+# Antes acá era un Literal con los mismos valores; se unificó para tener un solo
+# tipo. Al ser un Enum que hereda de str con idénticos valores, la serialización
+# JSON es byte-idéntica ("green"/"yellow"/"red"). Ver app/services/traffic.py.
+from app.schemas.accreditation import TrafficLight  # noqa: F401  (re-exportado)
 
 DocCheckStatus = Literal["ok", "expiring_soon", "expired", "missing", "pending_review"]
-TrafficLight = Literal["green", "yellow", "red"]
 
 
 class VehicleDocumentCheck(BaseModel):

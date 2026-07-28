@@ -1,39 +1,46 @@
 import json
+import logging
 from datetime import date
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.vehicle import Vehicle
-from app.models.vehicle_document_type import VehicleDocumentType
-from app.models.vehicle_document import VehicleDocument
-from app.models.vehicle_maintenance import VehicleMaintenance
-from app.models.system_settings import SystemSetting
 from app.models.associations import DocumentStatus
+from app.models.system_settings import SystemSetting
+from app.models.vehicle import Vehicle
+from app.models.vehicle_document import VehicleDocument
+from app.models.vehicle_document_type import VehicleDocumentType
+from app.models.vehicle_maintenance import VehicleMaintenance
 from app.schemas.vehicle_profile import (
+    DocCheckStatus,
+    TrafficLight,
     VehicleDocumentCheck,
-    VehicleMaintenanceCheck,
     VehicleFullProfile,
     VehicleGlobalStatus,
-    TrafficLight,
-    DocCheckStatus,
+    VehicleMaintenanceCheck,
 )
+from app.services.traffic import worst_traffic_light
+
+logger = logging.getLogger(__name__)
 
 _VEHICLE_ALERT_KEY = "vehicle_global_alert_days"
 _DEFAULT_VEHICLE_DAYS = 30
 
 
 async def _load_global_alert_days(db: AsyncSession) -> int:
-    result = await db.execute(
-        select(SystemSetting).where(SystemSetting.key == _VEHICLE_ALERT_KEY)
-    )
+    result = await db.execute(select(SystemSetting).where(SystemSetting.key == _VEHICLE_ALERT_KEY))
     setting = result.scalar_one_or_none()
     if setting:
         try:
             return int(json.loads(setting.value))
-        except Exception:
-            pass
+        except (json.JSONDecodeError, ValueError, TypeError):
+            logger.warning(
+                "Invalid %s setting value %r; falling back to default %d.",
+                _VEHICLE_ALERT_KEY,
+                setting.value,
+                _DEFAULT_VEHICLE_DAYS,
+            )
     return _DEFAULT_VEHICLE_DAYS
 
 
@@ -50,13 +57,11 @@ def _effective_alert_days(
 
 
 def _worst_traffic(*lights: TrafficLight | None) -> TrafficLight | None:
-    if not lights:
-        return None
-    order = {"red": 0, "yellow": 1, "green": 2}
-    valid = [l for l in lights if l is not None]
-    if not valid:
-        return None
-    return min(valid, key=lambda l: order[l])
+    """Adaptador variádico sobre la función común `worst_traffic_light`.
+
+    La lógica de severidad vive en `app/services/traffic.py` (fuente única).
+    Vehículos usan `default=None` (sin datos == sin semáforo)."""
+    return worst_traffic_light(lights)
 
 
 def _doc_traffic_light(checks: list[VehicleDocumentCheck]) -> TrafficLight | None:
@@ -94,6 +99,13 @@ def _evaluate_doc(
     today: date,
     global_days: int,
 ) -> tuple[DocCheckStatus, int | None]:
+    # DECISIÓN DE NEGOCIO (pendiente de unificar — ver CLAUDE.md):
+    # Vehículos calculan "expiring_soon" por un umbral de DÍAS FIJOS
+    # (_effective_alert_days: custom_alert_days > alert_days_override > global),
+    # mientras que trabajadores lo hacen por PORCENTAJE de la vida útil del
+    # documento (ver _doc_light en accreditation.py). La asimetría NO se unificó
+    # a propósito; podría ser intencional. Solo se unificó el "peor semáforo"
+    # (app/services/traffic.py), no la regla de umbral.
     if doc.status == DocumentStatus.REJECTED:
         return "missing", None
     if doc.expiry_date is None:
@@ -120,22 +132,26 @@ def _build_required_checks(
     for vdt in required_types:
         doc = latest_doc.get(vdt.id)
         if doc is None:
-            checks.append(VehicleDocumentCheck(
-                vehicle_document_type_id=vdt.id,
-                vehicle_document_type_name=vdt.name,
-                check_status="missing",
-            ))
+            checks.append(
+                VehicleDocumentCheck(
+                    vehicle_document_type_id=vdt.id,
+                    vehicle_document_type_name=vdt.name,
+                    check_status="missing",
+                )
+            )
             continue
         check_status, days_until = _evaluate_doc(doc, vdt, today, global_days)
-        checks.append(VehicleDocumentCheck(
-            vehicle_document_type_id=vdt.id,
-            vehicle_document_type_name=vdt.name,
-            check_status=check_status,
-            vehicle_document_id=doc.id,
-            expiry_date=doc.expiry_date.isoformat() if doc.expiry_date else None,
-            days_until_expiry=days_until,
-            custom_alert_days=doc.custom_alert_days,
-        ))
+        checks.append(
+            VehicleDocumentCheck(
+                vehicle_document_type_id=vdt.id,
+                vehicle_document_type_name=vdt.name,
+                check_status=check_status,
+                vehicle_document_id=doc.id,
+                expiry_date=doc.expiry_date.isoformat() if doc.expiry_date else None,
+                days_until_expiry=days_until,
+                custom_alert_days=doc.custom_alert_days,
+            )
+        )
     return checks
 
 
@@ -152,15 +168,17 @@ def _build_additional_checks(
         if vdt is None or vdt.is_required_base:
             continue
         check_status, days_until = _evaluate_doc(doc, vdt, today, global_days)
-        checks.append(VehicleDocumentCheck(
-            vehicle_document_type_id=vdt.id,
-            vehicle_document_type_name=vdt.name,
-            check_status=check_status,
-            vehicle_document_id=doc.id,
-            expiry_date=doc.expiry_date.isoformat() if doc.expiry_date else None,
-            days_until_expiry=days_until,
-            custom_alert_days=doc.custom_alert_days,
-        ))
+        checks.append(
+            VehicleDocumentCheck(
+                vehicle_document_type_id=vdt.id,
+                vehicle_document_type_name=vdt.name,
+                check_status=check_status,
+                vehicle_document_id=doc.id,
+                expiry_date=doc.expiry_date.isoformat() if doc.expiry_date else None,
+                days_until_expiry=days_until,
+                custom_alert_days=doc.custom_alert_days,
+            )
+        )
     return checks
 
 
@@ -194,29 +212,37 @@ async def get_vehicle_full_profile(vehicle_id: int, db: AsyncSession) -> Vehicle
             latest_doc[doc.vehicle_document_type_id] = doc
 
     required_doc_checks = _build_required_checks(required_types, latest_doc, today, global_days)
-    additional_doc_checks = _build_additional_checks(all_types_by_id, latest_doc, today, global_days)
+    additional_doc_checks = _build_additional_checks(
+        all_types_by_id, latest_doc, today, global_days
+    )
 
     maint_checks: list[VehicleMaintenanceCheck] = []
     for maint in vehicle.maintenance_records:
         if not maint.is_active:
             continue
         m_light = _maintenance_light(
-            maint.current_meter, maint.next_service_meter,
-            maint.last_service_meter, global_days,
+            maint.current_meter,
+            maint.next_service_meter,
+            maint.last_service_meter,
+            global_days,
         )
-        maint_checks.append(VehicleMaintenanceCheck(
-            vehicle_maintenance_id=maint.id,
-            maintenance_program=maint.maintenance_program,
-            measurement_unit=maint.measurement_unit,
-            maintenance_status=m_light,
-            usage_remaining=maint.next_service_meter - maint.current_meter,
-            next_service_meter=maint.next_service_meter,
-            current_meter=maint.current_meter,
-            last_service_meter=maint.last_service_meter,
-        ))
+        maint_checks.append(
+            VehicleMaintenanceCheck(
+                vehicle_maintenance_id=maint.id,
+                maintenance_program=maint.maintenance_program,
+                measurement_unit=maint.measurement_unit,
+                maintenance_status=m_light,
+                usage_remaining=maint.next_service_meter - maint.current_meter,
+                next_service_meter=maint.next_service_meter,
+                current_meter=maint.current_meter,
+                last_service_meter=maint.last_service_meter,
+            )
+        )
 
     required_doc_light = _doc_traffic_light(required_doc_checks)
-    additional_doc_light = _doc_traffic_light(additional_doc_checks) if additional_doc_checks else None
+    additional_doc_light = (
+        _doc_traffic_light(additional_doc_checks) if additional_doc_checks else None
+    )
     doc_light = _worst_traffic(required_doc_light, additional_doc_light)
     maint_lights = [c.maintenance_status for c in maint_checks] or [None]
     maint_light = _worst_traffic(*maint_lights)
@@ -312,11 +338,15 @@ async def get_vehicles_global_status(
                 latest_doc[doc.vehicle_document_type_id] = doc
 
         required_checks = _build_required_checks(required_types, latest_doc, today, global_days)
-        additional_checks = _build_additional_checks(all_types_by_id, latest_doc, today, global_days)
+        additional_checks = _build_additional_checks(
+            all_types_by_id, latest_doc, today, global_days
+        )
 
         maints = maints_by_vehicle.get(vehicle.id, [])
         maint_lights = [
-            _maintenance_light(m.current_meter, m.next_service_meter, m.last_service_meter, global_days)
+            _maintenance_light(
+                m.current_meter, m.next_service_meter, m.last_service_meter, global_days
+            )
             for m in maints
         ]
 
@@ -326,15 +356,17 @@ async def get_vehicles_global_status(
         maint_light = _worst_traffic(*maint_lights) if maint_lights else None
         global_light = _worst_traffic(doc_light, maint_light)
 
-        statuses.append(VehicleGlobalStatus(
-            vehicle_id=vehicle.id,
-            license_plate=vehicle.license_plate,
-            type=vehicle.type,
-            brand=vehicle.brand,
-            model=vehicle.model,
-            year=vehicle.year,
-            is_active=vehicle.is_active,
-            global_traffic_light=global_light,
-        ))
+        statuses.append(
+            VehicleGlobalStatus(
+                vehicle_id=vehicle.id,
+                license_plate=vehicle.license_plate,
+                type=vehicle.type,
+                brand=vehicle.brand,
+                model=vehicle.model,
+                year=vehicle.year,
+                is_active=vehicle.is_active,
+                global_traffic_light=global_light,
+            )
+        )
 
     return statuses
