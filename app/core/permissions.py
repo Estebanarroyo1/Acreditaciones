@@ -1,4 +1,5 @@
 import enum
+
 from fastapi import Depends, HTTPException
 
 from app.core.auth import get_current_user

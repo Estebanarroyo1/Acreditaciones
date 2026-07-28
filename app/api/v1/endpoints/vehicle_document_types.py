@@ -8,8 +8,8 @@ from app.db.session import get_db
 from app.models.vehicle_document_type import VehicleDocumentType
 from app.schemas.vehicle_document_type import (
     VehicleDocumentTypeCreate,
-    VehicleDocumentTypeUpdate,
     VehicleDocumentTypeRead,
+    VehicleDocumentTypeUpdate,
 )
 
 router = APIRouter(prefix="/vehicle-document-types", tags=["vehicle-document-types"])
@@ -30,7 +30,12 @@ async def list_vehicle_document_types(
     return result.scalars().all()
 
 
-@router.post("/", response_model=VehicleDocumentTypeRead, status_code=status.HTTP_201_CREATED, dependencies=_W)
+@router.post(
+    "/",
+    response_model=VehicleDocumentTypeRead,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=_W,
+)
 async def create_vehicle_document_type(
     payload: VehicleDocumentTypeCreate, db: AsyncSession = Depends(get_db)
 ):
@@ -63,9 +68,7 @@ async def update_vehicle_document_type(
 
 
 @router.delete("/{vdt_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=_W)
-async def delete_vehicle_document_type(
-    vdt_id: int, db: AsyncSession = Depends(get_db)
-):
+async def delete_vehicle_document_type(vdt_id: int, db: AsyncSession = Depends(get_db)):
     vdt = await db.get(VehicleDocumentType, vdt_id)
     if not vdt:
         raise HTTPException(status_code=404, detail="Tipo de documento no encontrado.")

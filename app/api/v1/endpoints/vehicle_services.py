@@ -4,16 +4,16 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.api.pagination import Pagination, pagination_params, set_total_count
 from app.core.permissions import Module, PermissionLevel, require_module
 from app.db.session import get_db
-from app.api.pagination import Pagination, pagination_params, set_total_count
 from app.models.vehicle import Vehicle
 from app.models.vehicle_document_type import VehicleDocumentType
 from app.models.vehicle_service import VehicleService
 from app.schemas.vehicle_service import (
     VehicleServiceCreate,
-    VehicleServiceUpdate,
     VehicleServiceRead,
+    VehicleServiceUpdate,
 )
 
 router = APIRouter(prefix="/vehicle-services", tags=["vehicle-services"])
@@ -56,7 +56,9 @@ async def list_vehicle_services(
     return result.scalars().all()
 
 
-@router.post("/", response_model=VehicleServiceRead, status_code=status.HTTP_201_CREATED, dependencies=_W)
+@router.post(
+    "/", response_model=VehicleServiceRead, status_code=status.HTTP_201_CREATED, dependencies=_W
+)
 async def create_vehicle_service(
     payload: VehicleServiceCreate,
     db: AsyncSession = Depends(get_db),
@@ -126,7 +128,9 @@ async def delete_vehicle_service(service_id: int, db: AsyncSession = Depends(get
     await db.commit()
 
 
-@router.post("/{service_id}/document-types/{dt_id}", response_model=VehicleServiceRead, dependencies=_W)
+@router.post(
+    "/{service_id}/document-types/{dt_id}", response_model=VehicleServiceRead, dependencies=_W
+)
 async def add_document_type_to_service(
     service_id: int,
     dt_id: int,
@@ -147,7 +151,9 @@ async def add_document_type_to_service(
     return result.scalar_one()
 
 
-@router.delete("/{service_id}/document-types/{dt_id}", response_model=VehicleServiceRead, dependencies=_W)
+@router.delete(
+    "/{service_id}/document-types/{dt_id}", response_model=VehicleServiceRead, dependencies=_W
+)
 async def remove_document_type_from_service(
     service_id: int,
     dt_id: int,
@@ -164,7 +170,9 @@ async def remove_document_type_from_service(
     return result.scalar_one()
 
 
-@router.post("/{service_id}/vehicles/{vehicle_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=_W)
+@router.post(
+    "/{service_id}/vehicles/{vehicle_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=_W
+)
 async def assign_vehicle_to_service(
     service_id: int,
     vehicle_id: int,
@@ -180,7 +188,9 @@ async def assign_vehicle_to_service(
     await db.commit()
 
 
-@router.delete("/{service_id}/vehicles/{vehicle_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=_W)
+@router.delete(
+    "/{service_id}/vehicles/{vehicle_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=_W
+)
 async def unassign_vehicle_from_service(
     service_id: int,
     vehicle_id: int,

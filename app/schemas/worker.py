@@ -1,5 +1,6 @@
-from datetime import datetime, date
-from pydantic import BaseModel, EmailStr, ConfigDict
+from datetime import date, datetime
+
+from pydantic import BaseModel, ConfigDict, EmailStr
 
 from app.models.worker import WorkLocation
 

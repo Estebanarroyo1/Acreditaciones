@@ -4,12 +4,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.pagination import Pagination, pagination_params, set_total_count
 from app.core.permissions import Module, PermissionLevel, require_module
 from app.db.session import get_db
-from app.api.pagination import Pagination, pagination_params, set_total_count
+from app.models.associations import WorkerProject
 from app.models.project import Project
 from app.models.worker import Worker, WorkLocation
-from app.models.associations import WorkerProject
 from app.schemas.accreditation import AccreditationResponse, WorkerGlobalStatus
 from app.services.accreditation import evaluate_accreditation, get_workers_global_status
 
@@ -33,20 +33,25 @@ async def get_all_workers_global_status(
     db: AsyncSession = Depends(get_db),
 ):
     location_enum = (
-        WorkLocation.PLANTA if location == "planta"
-        else WorkLocation.OBRA if location == "obra"
+        WorkLocation.PLANTA
+        if location == "planta"
+        else WorkLocation.OBRA
+        if location == "obra"
         else None
     )
-    count_q = select(func.count()).select_from(Worker).where(
-        Worker.is_active == (status == "active")
+    count_q = (
+        select(func.count()).select_from(Worker).where(Worker.is_active == (status == "active"))
     )
     if location_enum is not None:
         count_q = count_q.where(Worker.work_location == location_enum)
     total = await db.scalar(count_q)
 
     items = await get_workers_global_status(
-        db, status=status, location=location_enum,
-        limit=pagination.limit, offset=pagination.offset,
+        db,
+        status=status,
+        location=location_enum,
+        limit=pagination.limit,
+        offset=pagination.offset,
     )
     set_total_count(response, total or 0)
     return items

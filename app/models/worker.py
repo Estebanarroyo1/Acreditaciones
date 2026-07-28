@@ -1,6 +1,6 @@
 import enum
 
-from sqlalchemy import String, Date, Enum, Index
+from sqlalchemy import Date, Enum, Index, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin
@@ -15,9 +15,7 @@ class Worker(Base, TimestampMixin):
     __tablename__ = "workers"
     # Cubre el filtro is_active + orden por (last_name, first_name) de los
     # listados y del semáforo global de trabajadores.
-    __table_args__ = (
-        Index("ix_workers_active_name", "is_active", "last_name", "first_name"),
-    )
+    __table_args__ = (Index("ix_workers_active_name", "is_active", "last_name", "first_name"),)
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     first_name: Mapped[str] = mapped_column(String(100), nullable=False)

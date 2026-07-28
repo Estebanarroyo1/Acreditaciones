@@ -67,11 +67,13 @@ async def process_bulk_upload(content: bytes, db: AsyncSession) -> BulkUploadRes
     data_rows = rows[1:]
 
     for row_offset, raw_row in enumerate(data_rows, start=2):  # 2 = Excel row number
+        # `cell` se define y se usa DENTRO de la misma iteración (nunca se difiere),
+        # por lo que capturar `raw_row` del loop es seguro. B023 es falso positivo aquí.
         def cell(col_name: str) -> str:
             i = idx.get(col_name)
-            if i is None or i >= len(raw_row):
+            if i is None or i >= len(raw_row):  # noqa: B023
                 return ""
-            val = raw_row[i]
+            val = raw_row[i]  # noqa: B023
             return str(val).strip() if val is not None else ""
 
         # Skip completely empty rows
@@ -84,22 +86,26 @@ async def process_bulk_upload(content: bytes, db: AsyncSession) -> BulkUploadRes
         # Required fields
         missing = [c for c in _REQUIRED_COLS if not cell(c)]
         if missing:
-            errors.append(BulkUploadError(
-                row=row_num,
-                dni=dni_val or None,
-                error=f"Faltan campos obligatorios: {', '.join(missing)}",
-            ))
+            errors.append(
+                BulkUploadError(
+                    row=row_num,
+                    dni=dni_val or None,
+                    error=f"Faltan campos obligatorios: {', '.join(missing)}",
+                )
+            )
             continue
 
         # Ubicacion
         location_raw = cell("Ubicacion")
         location = _LOCATION_MAP.get(location_raw.lower())
         if location is None:
-            errors.append(BulkUploadError(
-                row=row_num,
-                dni=dni_val,
-                error=f"Ubicacion inválida: '{location_raw}'. Debe ser 'Planta' u 'Obra'.",
-            ))
+            errors.append(
+                BulkUploadError(
+                    row=row_num,
+                    dni=dni_val,
+                    error=f"Ubicacion inválida: '{location_raw}'. Debe ser 'Planta' u 'Obra'.",
+                )
+            )
             continue
 
         # DNI duplicate (DB + batch)
@@ -112,10 +118,13 @@ async def process_bulk_upload(content: bytes, db: AsyncSession) -> BulkUploadRes
         if email_val:
             email_lower = email_val.lower()
             if email_lower in existing_emails or email_lower in seen_emails:
-                errors.append(BulkUploadError(
-                    row=row_num, dni=dni_val,
-                    error=f"Email '{email_val}' ya existe en otro trabajador.",
-                ))
+                errors.append(
+                    BulkUploadError(
+                        row=row_num,
+                        dni=dni_val,
+                        error=f"Email '{email_val}' ya existe en otro trabajador.",
+                    )
+                )
                 continue
             seen_emails.add(email_lower)
 
@@ -124,10 +133,16 @@ async def process_bulk_upload(content: bytes, db: AsyncSession) -> BulkUploadRes
         # Solo cuando el usuario escribió texto plano llega como str.
         birth_date: date | None = None
         birth_idx = idx.get("Fecha_Nacimiento")
-        birth_raw_val = raw_row[birth_idx] if (birth_idx is not None and birth_idx < len(raw_row)) else None
+        birth_raw_val = (
+            raw_row[birth_idx] if (birth_idx is not None and birth_idx < len(raw_row)) else None
+        )
         if birth_raw_val is not None and birth_raw_val != "":
             if isinstance(birth_raw_val, (datetime, date)):
-                birth_date = birth_raw_val if isinstance(birth_raw_val, date) and not isinstance(birth_raw_val, datetime) else birth_raw_val.date()
+                birth_date = (
+                    birth_raw_val
+                    if isinstance(birth_raw_val, date) and not isinstance(birth_raw_val, datetime)
+                    else birth_raw_val.date()
+                )
             else:
                 birth_str = str(birth_raw_val).strip()
                 for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d"):
@@ -137,10 +152,13 @@ async def process_bulk_upload(content: bytes, db: AsyncSession) -> BulkUploadRes
                     except ValueError:
                         pass
                 if birth_date is None:
-                    errors.append(BulkUploadError(
-                        row=row_num, dni=dni_val,
-                        error=f"Fecha_Nacimiento inválida: '{birth_str}'. Usa DD/MM/AAAA.",
-                    ))
+                    errors.append(
+                        BulkUploadError(
+                            row=row_num,
+                            dni=dni_val,
+                            error=f"Fecha_Nacimiento inválida: '{birth_str}'. Usa DD/MM/AAAA.",
+                        )
+                    )
                     continue
 
         phone_val = cell("Telefono") or None
@@ -166,11 +184,13 @@ async def process_bulk_upload(content: bytes, db: AsyncSession) -> BulkUploadRes
             created += 1
         except IntegrityError:
             await db.rollback()
-            errors.append(BulkUploadError(
-                row=0,
-                dni=worker.dni,
-                error="Conflicto al insertar (DNI o email duplicado detectado tarde).",
-            ))
+            errors.append(
+                BulkUploadError(
+                    row=0,
+                    dni=worker.dni,
+                    error="Conflicto al insertar (DNI o email duplicado detectado tarde).",
+                )
+            )
 
     await db.commit()
 

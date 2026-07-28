@@ -9,8 +9,8 @@ from app.models.associations import WorkerDocument
 from app.models.document_type import DocumentType
 from app.schemas.document_type import (
     DocumentTypeCreate,
-    DocumentTypeUpdate,
     DocumentTypeRead,
+    DocumentTypeUpdate,
 )
 
 router = APIRouter(prefix="/document-types", tags=["document-types"])
@@ -21,18 +21,14 @@ _W = [Depends(require_module(Module.configuracion, PermissionLevel.write))]
 
 @router.get("/", response_model=list[DocumentTypeRead], dependencies=_R)
 async def list_document_types(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(DocumentType).where(DocumentType.is_active == True)
-    )
+    result = await db.execute(select(DocumentType).where(DocumentType.is_active == True))
     return result.scalars().all()
 
 
 @router.post(
     "/", response_model=DocumentTypeRead, status_code=status.HTTP_201_CREATED, dependencies=_W
 )
-async def create_document_type(
-    payload: DocumentTypeCreate, db: AsyncSession = Depends(get_db)
-):
+async def create_document_type(payload: DocumentTypeCreate, db: AsyncSession = Depends(get_db)):
     doc_type = DocumentType(**payload.model_dump())
     db.add(doc_type)
     try:

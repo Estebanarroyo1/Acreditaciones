@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,8 +9,8 @@ from app.models.document_category import DocumentCategory
 from app.models.document_type import DocumentType
 from app.schemas.document_category import (
     DocumentCategoryCreate,
-    DocumentCategoryUpdate,
     DocumentCategoryRead,
+    DocumentCategoryUpdate,
 )
 
 router = APIRouter(prefix="/document-categories", tags=["document-categories"])
@@ -25,7 +25,9 @@ async def list_document_categories(db: AsyncSession = Depends(get_db)):
     return result.scalars().all()
 
 
-@router.post("/", response_model=DocumentCategoryRead, status_code=status.HTTP_201_CREATED, dependencies=_W)
+@router.post(
+    "/", response_model=DocumentCategoryRead, status_code=status.HTTP_201_CREATED, dependencies=_W
+)
 async def create_document_category(
     payload: DocumentCategoryCreate, db: AsyncSession = Depends(get_db)
 ):

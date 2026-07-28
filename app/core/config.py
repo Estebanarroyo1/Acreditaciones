@@ -61,9 +61,9 @@ class Settings(BaseSettings):
     SMTP_HOST: str = "smtp.gmail.com"
     SMTP_PORT: int = 587
     SMTP_TLS: bool = True
-    SMTP_USER: str = ""          # empty → email sending disabled
+    SMTP_USER: str = ""  # empty → email sending disabled
     SMTP_PASSWORD: str = ""
-    SMTP_FROM: str = ""          # defaults to SMTP_USER if blank
+    SMTP_FROM: str = ""  # defaults to SMTP_USER if blank
 
     # Scheduler
     SCHEDULER_TIMEZONE: str = "America/Santiago"

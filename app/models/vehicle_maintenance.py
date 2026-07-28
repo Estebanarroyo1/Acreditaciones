@@ -1,7 +1,7 @@
 import enum
 from datetime import date
 
-from sqlalchemy import ForeignKey, Date, String, Enum, Float
+from sqlalchemy import Date, Enum, Float, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin
@@ -21,9 +21,7 @@ class VehicleMaintenance(Base, TimestampMixin):
     )
 
     maintenance_program: Mapped[str] = mapped_column(String(200), nullable=False)
-    measurement_unit: Mapped[MeasurementUnit] = mapped_column(
-        Enum(MeasurementUnit), nullable=False
-    )
+    measurement_unit: Mapped[MeasurementUnit] = mapped_column(Enum(MeasurementUnit), nullable=False)
     last_service_date: Mapped[date | None] = mapped_column(Date)
     last_service_meter: Mapped[float | None] = mapped_column(Float)
     next_service_meter: Mapped[float] = mapped_column(Float, nullable=False)

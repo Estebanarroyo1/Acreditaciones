@@ -3,13 +3,13 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.pagination import Pagination, pagination_params, set_total_count
 from app.core.permissions import Module, PermissionLevel, require_module
 from app.db.session import get_db
 from app.models.vehicle import Vehicle
 from app.models.vehicle_document import VehicleDocument
-from app.schemas.vehicle import VehicleCreate, VehicleUpdate, VehicleRead
+from app.schemas.vehicle import VehicleCreate, VehicleRead, VehicleUpdate
 from app.services.storage import delete_file
-from app.api.pagination import Pagination, pagination_params, set_total_count
 
 router = APIRouter(prefix="/vehicles", tags=["vehicles"])
 

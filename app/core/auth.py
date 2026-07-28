@@ -2,9 +2,9 @@ import logging
 from datetime import datetime, timezone
 
 import jwt
-from jwt import PyJWKClient
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from jwt import PyJWKClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,10 +21,7 @@ _jwks_client: PyJWKClient | None = None
 def _get_jwks_client() -> PyJWKClient:
     global _jwks_client
     if _jwks_client is None:
-        url = (
-            f"https://login.microsoftonline.com/"
-            f"{settings.ENTRA_TENANT_ID}/discovery/v2.0/keys"
-        )
+        url = f"https://login.microsoftonline.com/{settings.ENTRA_TENANT_ID}/discovery/v2.0/keys"
         _jwks_client = PyJWKClient(url, cache_keys=True)
     return _jwks_client
 

@@ -93,10 +93,6 @@ def _validate_permissions(
 ) -> None:
     for item in items:
         if item.module not in valid_modules:
-            raise HTTPException(
-                status_code=422, detail=f"Módulo inválido: '{item.module}'."
-            )
+            raise HTTPException(status_code=422, detail=f"Módulo inválido: '{item.module}'.")
         if item.level not in valid_levels:
-            raise HTTPException(
-                status_code=422, detail=f"Nivel inválido: '{item.level}'."
-            )
+            raise HTTPException(status_code=422, detail=f"Nivel inválido: '{item.level}'.")

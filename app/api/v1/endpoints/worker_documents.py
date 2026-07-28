@@ -4,11 +4,10 @@ from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from openai import APITimeoutError
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.permissions import Module, PermissionLevel, require_module
 from app.core.ratelimit import rate_limit_ai_scan
@@ -234,7 +233,9 @@ async def download_document(doc_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Documento no encontrado.")
     if not os.path.exists(doc.file_path):
         raise HTTPException(status_code=404, detail="Archivo no encontrado en el servidor.")
-    media_type = resolve_media_type(doc.mime_type, doc.original_filename) or "application/octet-stream"
+    media_type = (
+        resolve_media_type(doc.mime_type, doc.original_filename) or "application/octet-stream"
+    )
     return FileResponse(
         path=doc.file_path,
         media_type=media_type,
@@ -267,7 +268,9 @@ async def edit_document(
     doc_id: int,
     issue_date: str | None = Form(None, description="Fecha de emisión YYYY-MM-DD"),
     expiry_date: str | None = Form(None, description="Fecha de vencimiento YYYY-MM-DD"),
-    custom_alert_percentage: int | None = Form(None, description="% de vida útil para alerta (1-100). None = hereda del tipo o global"),
+    custom_alert_percentage: int | None = Form(
+        None, description="% de vida útil para alerta (1-100). None = hereda del tipo o global"
+    ),
     file: UploadFile | None = File(None),
     db: AsyncSession = Depends(get_db),
 ):
@@ -311,7 +314,9 @@ async def edit_document(
         doc.expiry_date = parsed_expiry
     if custom_alert_percentage is not None:
         # 0 = explicit clear; 1-100 = set override
-        doc.custom_alert_percentage = custom_alert_percentage if custom_alert_percentage > 0 else None
+        doc.custom_alert_percentage = (
+            custom_alert_percentage if custom_alert_percentage > 0 else None
+        )
 
     try:
         await db.commit()

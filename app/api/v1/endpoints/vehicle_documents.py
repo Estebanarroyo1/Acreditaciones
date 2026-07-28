@@ -4,11 +4,10 @@ from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from openai import APITimeoutError
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.permissions import Module, PermissionLevel, require_module
 from app.core.ratelimit import rate_limit_ai_scan
@@ -45,9 +44,7 @@ async def ai_scan_vehicle_document(file: UploadFile = File(...)):
     # Aplica el límite de tamaño ANTES de enviar nada a OpenAI.
     content = await read_upload_capped(file)
     try:
-        result = await extract_and_validate(
-            content, file.content_type or "", file.filename or ""
-        )
+        result = await extract_and_validate(content, file.content_type or "", file.filename or "")
     except APITimeoutError:
         raise HTTPException(status_code=504, detail="El análisis del documento tardó demasiado.")
     except ValueError as exc:
@@ -66,7 +63,9 @@ async def ai_scan_vehicle_document(file: UploadFile = File(...)):
     }
 
 
-@router.post("/", response_model=VehicleDocumentRead, status_code=status.HTTP_201_CREATED, dependencies=_W)
+@router.post(
+    "/", response_model=VehicleDocumentRead, status_code=status.HTTP_201_CREATED, dependencies=_W
+)
 async def upload_vehicle_document(
     vehicle_id: int = Form(...),
     vehicle_document_type_id: int = Form(...),
@@ -111,7 +110,9 @@ async def upload_vehicle_document(
                 content, file.content_type or "", file.filename or "", vdt.name
             )
         except APITimeoutError:
-            raise HTTPException(status_code=504, detail="El análisis del documento tardó demasiado.")
+            raise HTTPException(
+                status_code=504, detail="El análisis del documento tardó demasiado."
+            )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
         except Exception:
@@ -224,7 +225,9 @@ async def download_vehicle_document(doc_id: int, db: AsyncSession = Depends(get_
         raise HTTPException(status_code=404, detail="Documento no encontrado.")
     if not os.path.exists(doc.file_path):
         raise HTTPException(status_code=404, detail="Archivo no encontrado en el servidor.")
-    media_type = resolve_media_type(doc.mime_type, doc.original_filename) or "application/octet-stream"
+    media_type = (
+        resolve_media_type(doc.mime_type, doc.original_filename) or "application/octet-stream"
+    )
     return FileResponse(
         path=doc.file_path,
         media_type=media_type,
@@ -294,11 +297,15 @@ async def edit_vehicle_document(
             content = await read_upload_capped(file)
             try:
                 ai = await extract_and_validate(
-                    content, file.content_type or "", file.filename or "",
+                    content,
+                    file.content_type or "",
+                    file.filename or "",
                     doc.vehicle_document_type.name,
                 )
             except APITimeoutError:
-                raise HTTPException(status_code=504, detail="El análisis del documento tardó demasiado.")
+                raise HTTPException(
+                    status_code=504, detail="El análisis del documento tardó demasiado."
+                )
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc))
             except Exception:

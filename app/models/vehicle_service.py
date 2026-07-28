@@ -1,14 +1,15 @@
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
-from sqlalchemy import String, Text, Boolean, Integer, ForeignKey, Table, Column
+from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, Table, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin
 
 if TYPE_CHECKING:
-    from app.models.vehicle_document_type import VehicleDocumentType
     from app.models.vehicle import Vehicle
+    from app.models.vehicle_document_type import VehicleDocumentType
 
 vehicle_service_document_types = Table(
     "vehicle_service_document_types",

@@ -4,7 +4,7 @@ import tempfile
 import uuid
 from pathlib import Path
 
-from fastapi import UploadFile, HTTPException, status
+from fastapi import HTTPException, UploadFile, status
 
 from app.core.config import (
     ALLOWED_MIME_TYPES,
@@ -217,9 +217,6 @@ async def save_vehicle_upload(
     derivado de la firma validada (nunca del Content-Type del cliente).
     """
     dest_dir = (
-        Path(settings.UPLOAD_DIR)
-        / "vehicles"
-        / str(vehicle_id)
-        / str(vehicle_document_type_id)
+        Path(settings.UPLOAD_DIR) / "vehicles" / str(vehicle_id) / str(vehicle_document_type_id)
     )
     return await _stream_upload_to_dest(file, dest_dir)

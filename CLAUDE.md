@@ -70,6 +70,13 @@ npm run build        # Verificar que compila sin errores de TS
 .venv\Scripts\pytest.exe tests/integration/  # solo integración (SQLite en memoria)
 .venv\Scripts\pytest.exe -v              # verbose
 
+# Lint / Format Python (ruff — config en pyproject.toml, line-length 100)
+.venv\Scripts\python.exe -m ruff check app/          # lint (debe salir limpio)
+.venv\Scripts\python.exe -m ruff check app/ --fix    # arregla imports (I) y fixes seguros
+.venv\Scripts\python.exe -m ruff format app/         # formatea (envuelve líneas largas)
+.venv\Scripts\python.exe -m ruff format app/ --check # verifica formato sin escribir (CI)
+# Instalar herramientas de dev (incluye ruff): pip install -r requirements-dev.txt
+
 # Git
 git add <archivos>
 git commit -m "mensaje"
@@ -106,6 +113,28 @@ Cascada de porcentaje en tres niveles:
 3. `SystemSettings.global_alert_percentage` (default: 20%)
 
 `alert_days = total_life_days * pct / 100`. Documento entra en YELLOW cuando `days_remaining <= alert_days`.
+
+### Semáforo compartido y asimetría trabajadores/vehículos
+
+- **`TrafficLight` unificado:** un único Enum `str` (`green`/`yellow`/`red`) definido
+  en `app/schemas/accreditation.py`; `app/schemas/vehicle_profile.py` lo **importa**
+  (antes redefinía un `Literal` con los mismos valores). La serialización JSON es
+  byte-idéntica.
+- **"Peor semáforo" unificado:** `app/services/traffic.py` es la **fuente única**
+  del orden de severidad (`red > yellow > green`) y expone
+  `worst_traffic_light(lights, *, default=...)`. Reemplaza a los antiguos `_worst`
+  (trabajadores, `default=GREEN`: lista vacía == verde) y `_worst_traffic`
+  (vehículos, `default=None`: sin datos == sin semáforo, hoy un adaptador delgado).
+- **⚠️ Asimetría NO unificada (decisión de negocio pendiente):** la regla
+  `EXPIRING_SOON` difiere entre módulos y se dejó **a propósito** sin unificar:
+  - **Trabajadores:** por **PORCENTAJE** de la vida útil del documento
+    (`is_expiring_soon` + cascada `effective_pct`, ver arriba).
+  - **Vehículos:** por **DÍAS FIJOS** (`_effective_alert_days`: `custom_alert_days`
+    > `alert_days_override` > `vehicle_global_alert_days`, default 30 días).
+
+  Podría ser intencional (semántica de negocio distinta) o un candidato a unificar
+  en una sesión aparte. Documentado también en comentarios en ambos servicios
+  (`_doc_light` y `_evaluate_doc`).
 
 ## Autenticación — Microsoft Entra ID
 
@@ -268,6 +297,7 @@ IA en upload/edit) están protegidos:
 2. **Sincronía schema/model:** Todo campo nuevo en un modelo SQLAlchemy requiere: migration + schema Pydantic backend + interfaz TypeScript en `frontend/lib/types.ts`.
 3. **Router:** Todo endpoint nuevo debe registrarse en `app/api/v1/router.py` o no será accesible.
 4. **Lint frontend:** Correr `npm run lint` en `frontend/` antes de terminar cualquier sesión que toque `.tsx`/`.ts`.
+   **Lint backend:** Correr `ruff check app/` (y `ruff format app/`) antes de terminar cualquier sesión que toque `.py`. Config en `pyproject.toml` (line-length 100; ignores documentados: `B904`, `E501`, `E712` en queries, `F821` en modelos). No agregar `# noqa` sin justificarlo.
 5. **Variables de entorno:** `.env` nunca va al repo (está en `.gitignore`). Usar `.env.example` como plantilla. La clave `OPENAI_API_KEY` debe rotarse si quedó expuesta.
 6. **Diseño visual:** El sistema usa estilo SAP Fiori ERP — fondos blancos, tabs con `border-b-2 border-[#003f7a]`, tipografía densa (`text-[11px]`), sin dark mode.
 7. **Async everywhere:** Todos los servicios y endpoints son `async def`. No usar `.execute()` síncrono de SQLAlchemy.

@@ -1,10 +1,15 @@
 from datetime import date, timedelta
 
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.models.associations import ProjectDocumentType, WorkerDocument, DocumentStatus, WorkerProject
+from app.models.associations import (
+    DocumentStatus,
+    ProjectDocumentType,
+    WorkerDocument,
+    WorkerProject,
+)
 from app.models.document_type import DocumentType
 from app.models.worker import Worker
 from app.schemas.accreditation import DocumentCheckStatus, TrafficLight
@@ -16,7 +21,7 @@ from app.schemas.worker_profile import (
     ProjectSpecificCheck,
     WorkerFullProfile,
 )
-from app.services.alert_rules import load_global_pct, effective_pct, is_expiring_soon
+from app.services.alert_rules import effective_pct, is_expiring_soon, load_global_pct
 
 _INVALID = (DocumentStatus.REJECTED,)
 _PENDING_REVIEW = frozenset({DocumentStatus.PENDING, DocumentStatus.UPLOADED})
@@ -42,7 +47,13 @@ def _eval_doc(doc: "WorkerDocument | None", dt: DocumentType, today: date, globa
     days = (expiry - today).days
     if days < 0:
         status = DocumentCheckStatus.EXPIRED
-    elif is_expiring_soon(expiry, doc.issue_date, dt.effective_validity_days, effective_pct(doc, dt, global_pct), today):
+    elif is_expiring_soon(
+        expiry,
+        doc.issue_date,
+        dt.effective_validity_days,
+        effective_pct(doc, dt, global_pct),
+        today,
+    ):
         status = DocumentCheckStatus.EXPIRING_SOON
     else:
         status = DocumentCheckStatus.OK
@@ -91,19 +102,21 @@ async def get_worker_full_profile(worker_id: int, db: AsyncSession) -> WorkerFul
     for dt in global_doc_types:
         status, expiry, days, doc_id = _eval_doc(latest_global.get(dt.id), dt, today, global_pct)
         doc_obj = latest_global.get(dt.id)
-        global_requirements.append(GlobalRequirementCheck(
-            document_type_id=dt.id,
-            document_type_name=dt.name,
-            category=dt.category.name if dt.category else "",
-            validity_days=dt.effective_validity_days,
-            check_status=status,
-            worker_document_id=doc_id,
-            expiry_date=expiry,
-            days_until_expiry=days,
-            custom_alert_percentage=doc_obj.custom_alert_percentage if doc_obj else None,
-            is_achs=dt.is_achs,
-            achs_category=dt.achs_category,
-        ))
+        global_requirements.append(
+            GlobalRequirementCheck(
+                document_type_id=dt.id,
+                document_type_name=dt.name,
+                category=dt.category.name if dt.category else "",
+                validity_days=dt.effective_validity_days,
+                check_status=status,
+                worker_document_id=doc_id,
+                expiry_date=expiry,
+                days_until_expiry=days,
+                custom_alert_percentage=doc_obj.custom_alert_percentage if doc_obj else None,
+                is_achs=dt.is_achs,
+                achs_category=dt.achs_category,
+            )
+        )
 
     # ── Project assignments (active worker assignments, split by project status) ─
     assignments_result = await db.execute(
@@ -127,8 +140,7 @@ async def get_worker_full_profile(worker_id: int, db: AsyncSession) -> WorkerFul
             .options(selectinload(ProjectDocumentType.document_type))
         )
         specific_reqs = [
-            r for r in proj_reqs_result.scalars().all()
-            if r.document_type_id not in global_dt_ids
+            r for r in proj_reqs_result.scalars().all() if r.document_type_id not in global_dt_ids
         ]
 
         project_checks: list[ProjectSpecificCheck] = []
@@ -138,17 +150,19 @@ async def get_worker_full_profile(worker_id: int, db: AsyncSession) -> WorkerFul
                 latest_by_project.get((project.id, dt.id)), dt, today, global_pct
             )
             proj_doc = latest_by_project.get((project.id, dt.id))
-            project_checks.append(ProjectSpecificCheck(
-                document_type_id=dt.id,
-                document_type_name=dt.name,
-                category=dt.category.name if dt.category else "",
-                is_mandatory=req.is_mandatory,
-                check_status=status,
-                worker_document_id=doc_id,
-                expiry_date=expiry,
-                days_until_expiry=days,
-                custom_alert_percentage=proj_doc.custom_alert_percentage if proj_doc else None,
-            ))
+            project_checks.append(
+                ProjectSpecificCheck(
+                    document_type_id=dt.id,
+                    document_type_name=dt.name,
+                    category=dt.category.name if dt.category else "",
+                    is_mandatory=req.is_mandatory,
+                    check_status=status,
+                    worker_document_id=doc_id,
+                    expiry_date=expiry,
+                    days_until_expiry=days,
+                    custom_alert_percentage=proj_doc.custom_alert_percentage if proj_doc else None,
+                )
+            )
 
         # Project traffic light: global requirements (per this project) + specific mandatory
         # Falls back to any global upload (project_id=None) if no project-scoped doc exists.
@@ -163,13 +177,20 @@ async def get_worker_full_profile(worker_id: int, db: AsyncSession) -> WorkerFul
                 has_yellow = True
                 continue
             _evd = dt.effective_validity_days
-            eff_expiry = (doc.issue_date + timedelta(days=_evd)) if (_evd and doc.issue_date) else doc.expiry_date
+            eff_expiry = (
+                (doc.issue_date + timedelta(days=_evd))
+                if (_evd and doc.issue_date)
+                else doc.expiry_date
+            )
             if eff_expiry and eff_expiry < today:
                 has_red = True
                 break
             if eff_expiry and is_expiring_soon(
-                eff_expiry, doc.issue_date, dt.effective_validity_days,
-                effective_pct(doc, dt, global_pct), today,
+                eff_expiry,
+                doc.issue_date,
+                dt.effective_validity_days,
+                effective_pct(doc, dt, global_pct),
+                today,
             ):
                 has_yellow = True
         if not has_red:
@@ -179,29 +200,39 @@ async def get_worker_full_profile(worker_id: int, db: AsyncSession) -> WorkerFul
                 if chk.check_status in (DocumentCheckStatus.MISSING, DocumentCheckStatus.EXPIRED):
                     has_red = True
                     break
-                if chk.check_status in (DocumentCheckStatus.EXPIRING_SOON, DocumentCheckStatus.PENDING_REVIEW):
+                if chk.check_status in (
+                    DocumentCheckStatus.EXPIRING_SOON,
+                    DocumentCheckStatus.PENDING_REVIEW,
+                ):
                     has_yellow = True
 
         p_light = (
-            TrafficLight.RED if has_red
-            else TrafficLight.YELLOW if has_yellow
+            TrafficLight.RED
+            if has_red
+            else TrafficLight.YELLOW
+            if has_yellow
             else TrafficLight.GREEN
         )
 
-        assigned_projects.append(AssignedProjectProfile(
-            project_id=project.id,
-            project_name=project.name,
-            project_description=project.description,
-            traffic_light=p_light,
-            project_specific_requirements=project_checks,
-        ))
+        assigned_projects.append(
+            AssignedProjectProfile(
+                project_id=project.id,
+                project_name=project.name,
+                project_description=project.description,
+                traffic_light=p_light,
+                project_specific_requirements=project_checks,
+            )
+        )
 
     # ── Global traffic light: worst across all projects ────────────────────
     lights = {ap.traffic_light for ap in assigned_projects}
     global_light: TrafficLight | None = (
-        TrafficLight.RED if TrafficLight.RED in lights
-        else TrafficLight.YELLOW if TrafficLight.YELLOW in lights
-        else TrafficLight.GREEN if lights
+        TrafficLight.RED
+        if TrafficLight.RED in lights
+        else TrafficLight.YELLOW
+        if TrafficLight.YELLOW in lights
+        else TrafficLight.GREEN
+        if lights
         else None
     )
 
@@ -223,33 +254,39 @@ async def get_worker_full_profile(worker_id: int, db: AsyncSession) -> WorkerFul
         for dt in global_doc_types:
             seen.add(dt.id)
             doc = latest_by_project.get((project.id, dt.id))
-            docs.append(ArchivedProjectDoc(
-                document_type_id=dt.id,
-                document_type_name=dt.name,
-                category=dt.category.name if dt.category else "",
-                worker_document_id=doc.id if doc else None,
-                expiry_date=doc.expiry_date if doc else None,
-            ))
+            docs.append(
+                ArchivedProjectDoc(
+                    document_type_id=dt.id,
+                    document_type_name=dt.name,
+                    category=dt.category.name if dt.category else "",
+                    worker_document_id=doc.id if doc else None,
+                    expiry_date=doc.expiry_date if doc else None,
+                )
+            )
 
         for req in proj_reqs:
             if req.document_type_id in seen:
                 continue
             dt = req.document_type
             doc = latest_by_project.get((project.id, dt.id))
-            docs.append(ArchivedProjectDoc(
-                document_type_id=dt.id,
-                document_type_name=dt.name,
-                category=dt.category.name if dt.category else "",
-                worker_document_id=doc.id if doc else None,
-                expiry_date=doc.expiry_date if doc else None,
-            ))
+            docs.append(
+                ArchivedProjectDoc(
+                    document_type_id=dt.id,
+                    document_type_name=dt.name,
+                    category=dt.category.name if dt.category else "",
+                    worker_document_id=doc.id if doc else None,
+                    expiry_date=doc.expiry_date if doc else None,
+                )
+            )
 
-        archived_projects.append(ArchivedProjectProfile(
-            project_id=project.id,
-            project_name=project.name,
-            project_description=project.description,
-            documents=docs,
-        ))
+        archived_projects.append(
+            ArchivedProjectProfile(
+                project_id=project.id,
+                project_name=project.name,
+                project_description=project.description,
+                documents=docs,
+            )
+        )
 
     return WorkerFullProfile(
         worker_id=worker.id,

@@ -1,22 +1,22 @@
 from fastapi import APIRouter
 
 from app.api.v1.endpoints import (
-    projects,
-    workers,
-    document_types,
-    document_categories,
-    worker_documents,
     accreditation,
     admin,
-    settings,
+    auth,
+    document_categories,
+    document_types,
+    projects,
     reports,
-    vehicles,
+    settings,
+    vehicle_accreditation,
     vehicle_document_types,
     vehicle_documents,
     vehicle_maintenance,
     vehicle_services,
-    vehicle_accreditation,
-    auth,
+    vehicles,
+    worker_documents,
+    workers,
 )
 
 api_router = APIRouter()

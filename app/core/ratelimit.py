@@ -9,6 +9,7 @@ con múltiples workers, cada worker tendría su propio contador y el límite rea
 sería N × AI_SCAN_MAX_PER_MINUTE. En ese escenario hay que migrar este estado a
 un almacén compartido (Redis) — p. ej. INCR con EXPIRE por clave usuario:minuto.
 """
+
 import time
 
 from fastapi import Depends, HTTPException, status
@@ -47,8 +48,7 @@ async def rate_limit_ai_scan(current_user: User = Depends(get_current_user)) -> 
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=(
-                "Demasiadas solicitudes de análisis con IA. "
-                "Espera un minuto e inténtalo de nuevo."
+                "Demasiadas solicitudes de análisis con IA. Espera un minuto e inténtalo de nuevo."
             ),
         )
 

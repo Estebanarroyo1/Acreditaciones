@@ -2,9 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.pagination import Pagination, pagination_params, set_total_count
 from app.core.permissions import Module, PermissionLevel, require_module
 from app.db.session import get_db
-from app.api.pagination import Pagination, pagination_params, set_total_count
 from app.models.vehicle import Vehicle
 from app.schemas.vehicle_profile import VehicleFullProfile, VehicleGlobalStatus
 from app.services.vehicle_accreditation import (
@@ -32,8 +32,10 @@ async def vehicles_global_status(
     total = await db.scalar(count_q)
 
     items = await get_vehicles_global_status(
-        db, active_only=active_only,
-        limit=pagination.limit, offset=pagination.offset,
+        db,
+        active_only=active_only,
+        limit=pagination.limit,
+        offset=pagination.offset,
     )
     set_total_count(response, total or 0)
     return items

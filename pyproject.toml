@@ -1,0 +1,50 @@
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# Solo el código de aplicación entra al lint (migraciones autogeneradas y
+# entornos virtuales quedan fuera).
+extend-exclude = ["migrations", ".venv"]
+
+[tool.ruff.lint]
+# F = pyflakes, E/W = pycodestyle, B = flake8-bugbear, I = isort (orden de imports).
+select = ["F", "E", "W", "B", "I"]
+ignore = [
+    # B904: raise-without-from dentro de except. Los mensajes al cliente ya están
+    # sanitizados (ver "Higiene de errores" en CLAUDE.md); el encadenado `from`
+    # se agrega caso a caso cuando mejora la traza del servidor, no en masa.
+    "B904",
+    # E501: el ancho de línea (100) lo impone `ruff format` sobre TODO lo envolvible.
+    # Lo único que quedaría marcado son strings de contenido (prompts de IA, mensajes
+    # al usuario) que NO deben partirse para no alterar el texto. Se delega el ancho
+    # al formatter (patrón recomendado por ruff al usar su propio formateador).
+    "E501",
+]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI usa estos helpers COMO valores por defecto de parámetros a propósito
+# (inyección de dependencias). Sin esto, B008 dispara ~106 falsos positivos.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Path",
+    "fastapi.Body",
+    "fastapi.Form",
+    "fastapi.File",
+    "fastapi.Header",
+    "fastapi.Cookie",
+    "fastapi.Security",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# E712 (== True / == False): en las capas de endpoints y servicios es el idiom
+# de filtro de SQLAlchemy (`Column == True` genera el SQL correcto). Se tolera
+# SOLO ahí; en el resto del código un `== True` sí se marca como error.
+"app/api/**/*.py" = ["E712"]
+"app/services/**/*.py" = ["E712"]
+# F821 (undefined-name): los modelos usan forward-refs en string
+# `Mapped["Worker"]` que resuelve el mapper de SQLAlchemy en runtime; no son
+# nombres indefinidos reales.
+"app/models/**/*.py" = ["F821"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]

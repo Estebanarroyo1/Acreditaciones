@@ -47,6 +47,7 @@ class AccreditationResponse(BaseModel):
 
 # ── Global status (across all projects) ──────────────────────────────────────
 
+
 class ProjectTrafficLight(BaseModel):
     """Estado de acreditación de un trabajador en un proyecto concreto."""
 

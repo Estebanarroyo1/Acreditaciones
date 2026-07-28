@@ -2,6 +2,7 @@
 Async email service using aiosmtplib.
 Builds HTML messages from a single embedded template — no external files needed.
 """
+
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -19,6 +20,7 @@ logger = logging.getLogger(__name__)
 # Data transfer objects used by the job
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class DocumentAlert:
     doc_name: str
@@ -32,8 +34,8 @@ class DocumentAlert:
 # ---------------------------------------------------------------------------
 
 _THRESHOLD_BADGE: dict[int, tuple[str, str]] = {
-    0:  ("#dc2626", "VENCE HOY"),
-    7:  ("#dc2626", "7 días"),
+    0: ("#dc2626", "VENCE HOY"),
+    7: ("#dc2626", "7 días"),
     15: ("#d97706", "15 días"),
     30: ("#ca8a04", "30 días"),
     60: ("#2563eb", "60 días"),
@@ -49,7 +51,7 @@ def _doc_row(alert: DocumentAlert) -> str:
           <td style="padding:10px 12px;border-bottom:1px solid #eee;">{alert.doc_name}</td>
           <td style="padding:10px 12px;border-bottom:1px solid #eee;color:#555;">{alert.category}</td>
           <td style="padding:10px 12px;border-bottom:1px solid #eee;text-align:center;">
-              {alert.expiry_date.strftime('%d/%m/%Y')}
+              {alert.expiry_date.strftime("%d/%m/%Y")}
           </td>
           <td style="padding:10px 12px;border-bottom:1px solid #eee;text-align:center;">
             <span style="background:{color};color:#fff;padding:3px 10px;
@@ -124,6 +126,7 @@ def build_html(worker_name: str, project_name: str, alerts: list[DocumentAlert])
 # Send function
 # ---------------------------------------------------------------------------
 
+
 async def send_alert_email(
     to_email: str,
     worker_name: str,
@@ -135,9 +138,7 @@ async def send_alert_email(
     Raises on SMTP failure so the caller can decide whether to log/retry.
     """
     if not settings.SMTP_USER:
-        logger.warning(
-            "SMTP_USER not configured — skipping email to %s", to_email
-        )
+        logger.warning("SMTP_USER not configured — skipping email to %s", to_email)
         return
 
     subject_parts = []

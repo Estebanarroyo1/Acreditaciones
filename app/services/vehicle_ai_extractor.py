@@ -29,6 +29,7 @@ async def _to_image(content: bytes, mime: str, filename: str) -> tuple[bytes, st
     if "pdf" in mime or fn.endswith(".pdf"):
         try:
             import fitz
+
             pdf = fitz.open(stream=content, filetype="pdf")
             pix = pdf[0].get_pixmap(matrix=fitz.Matrix(2, 2))
             return pix.tobytes("png"), "image/png"
@@ -84,7 +85,9 @@ async def extract_and_validate(
             f"Si el documento NO corresponde a '{expected_document_name}', "
             f"cambia is_expected_document a false y detected_document_name al nombre real."
         )
-        user_text = f"¿Este documento es un '{expected_document_name}'? Extrae las fechas y verifica."
+        user_text = (
+            f"¿Este documento es un '{expected_document_name}'? Extrae las fechas y verifica."
+        )
     else:
         system_prompt = (
             "Eres un auditor experto en documentos vehiculares chilenos. "

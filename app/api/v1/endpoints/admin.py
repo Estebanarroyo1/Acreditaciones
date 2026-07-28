@@ -2,6 +2,7 @@
 Admin-only endpoints — not meant for production exposure.
 Useful for testing the notification job without waiting for the cron trigger.
 """
+
 from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel
 
@@ -27,6 +28,7 @@ class JobResult(BaseModel):
 )
 async def trigger_notifications() -> JobResult:
     from app.services.notification_job import run_daily_notifications
+
     try:
         await run_daily_notifications()
         return JobResult(status="ok", detail="Job ejecutado correctamente.")

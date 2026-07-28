@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, String, Text, Integer, ForeignKey
+from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin
@@ -38,6 +38,4 @@ class DocumentType(Base, TimestampMixin):
     project_requirements: Mapped[list["ProjectDocumentType"]] = relationship(
         back_populates="document_type"
     )
-    worker_documents: Mapped[list["WorkerDocument"]] = relationship(
-        back_populates="document_type"
-    )
+    worker_documents: Mapped[list["WorkerDocument"]] = relationship(back_populates="document_type")

@@ -1,18 +1,18 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.permissions import Module, PermissionLevel, require_module
 from app.db.session import get_db
+from app.models.associations import ProjectDocumentType, WorkerProject
+from app.models.document_type import DocumentType
 from app.models.project import Project
 from app.models.worker import Worker
-from app.models.document_type import DocumentType
-from app.models.associations import ProjectDocumentType, WorkerProject
-from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectRead
-from app.schemas.worker import WorkerRead
 from app.schemas.associations import ProjectRequirementRead
+from app.schemas.project import ProjectCreate, ProjectRead, ProjectUpdate
+from app.schemas.worker import WorkerRead
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -105,9 +105,7 @@ async def delete_project(project_id: int, db: AsyncSession = Depends(get_db)):
     summary="Listar tipos de documento requeridos por un proyecto",
     dependencies=_R,
 )
-async def list_project_requirements(
-    project_id: int, db: AsyncSession = Depends(get_db)
-):
+async def list_project_requirements(project_id: int, db: AsyncSession = Depends(get_db)):
     if not await db.get(Project, project_id):
         raise HTTPException(status_code=404, detail="Proyecto no encontrado.")
     result = await db.execute(

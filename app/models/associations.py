@@ -5,10 +5,20 @@ Association / junction tables for the many-to-many relationships:
   Worker   <-->  Project        (WorkerProject)
   Worker   <-->  DocumentType   (WorkerDocument) — stores the actual file
 """
+
 import enum
-from datetime import datetime, date
+from datetime import date, datetime
+
 from sqlalchemy import (
-    ForeignKey, DateTime, Date, String, Text, Boolean, Enum, Index, UniqueConstraint
+    Boolean,
+    Date,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    String,
+    Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -19,9 +29,7 @@ class WorkerProject(Base, TimestampMixin):
     """Assignment of a Worker to a Project."""
 
     __tablename__ = "worker_projects"
-    __table_args__ = (
-        UniqueConstraint("worker_id", "project_id", name="uq_worker_project"),
-    )
+    __table_args__ = (UniqueConstraint("worker_id", "project_id", name="uq_worker_project"),)
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     worker_id: Mapped[int] = mapped_column(
@@ -47,9 +55,7 @@ class ProjectDocumentType(Base, TimestampMixin):
 
     __tablename__ = "project_document_types"
     __table_args__ = (
-        UniqueConstraint(
-            "project_id", "document_type_id", name="uq_project_document_type"
-        ),
+        UniqueConstraint("project_id", "document_type_id", name="uq_project_document_type"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
@@ -63,17 +69,15 @@ class ProjectDocumentType(Base, TimestampMixin):
 
     # Relationships
     project: Mapped["Project"] = relationship(back_populates="required_document_types")
-    document_type: Mapped["DocumentType"] = relationship(
-        back_populates="project_requirements"
-    )
+    document_type: Mapped["DocumentType"] = relationship(back_populates="project_requirements")
 
 
 class DocumentStatus(str, enum.Enum):
-    PENDING = "PENDING"       # Aún no subido
-    UPLOADED = "UPLOADED"     # Subido, pendiente de revisión
-    APPROVED = "APPROVED"     # Aprobado por revisor
-    REJECTED = "REJECTED"     # Rechazado (requiere resubida)
-    EXPIRED = "EXPIRED"       # Venció
+    PENDING = "PENDING"  # Aún no subido
+    UPLOADED = "UPLOADED"  # Subido, pendiente de revisión
+    APPROVED = "APPROVED"  # Aprobado por revisor
+    REJECTED = "REJECTED"  # Rechazado (requiere resubida)
+    EXPIRED = "EXPIRED"  # Venció
 
 
 class WorkerDocument(Base, TimestampMixin):
@@ -86,9 +90,7 @@ class WorkerDocument(Base, TimestampMixin):
     __tablename__ = "worker_documents"
     # Cubre "último documento por (worker, tipo)": filtro worker_id + orden por
     # upload_date desc del semáforo global y los lookups de acreditación.
-    __table_args__ = (
-        Index("ix_worker_documents_worker_upload", "worker_id", "upload_date"),
-    )
+    __table_args__ = (Index("ix_worker_documents_worker_upload", "worker_id", "upload_date"),)
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
 
@@ -115,7 +117,7 @@ class WorkerDocument(Base, TimestampMixin):
         default=lambda: datetime.now(),
         nullable=False,
     )
-    issue_date: Mapped[date | None] = mapped_column(Date)       # Fecha de emisión del doc
+    issue_date: Mapped[date | None] = mapped_column(Date)  # Fecha de emisión del doc
     expiry_date: Mapped[date | None] = mapped_column(Date, index=True)  # Fecha de vencimiento
 
     # Review workflow
@@ -132,7 +134,5 @@ class WorkerDocument(Base, TimestampMixin):
 
     # Relationships
     worker: Mapped["Worker"] = relationship(back_populates="documents")
-    document_type: Mapped["DocumentType"] = relationship(
-        back_populates="worker_documents"
-    )
+    document_type: Mapped["DocumentType"] = relationship(back_populates="worker_documents")
     project: Mapped["Project"] = relationship()

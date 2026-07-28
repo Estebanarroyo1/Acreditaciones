@@ -1,4 +1,5 @@
 from datetime import date
+
 from pydantic import BaseModel
 
 from app.schemas.accreditation import DocumentCheckStatus, TrafficLight

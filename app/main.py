@@ -5,8 +5,8 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.core.config import settings
 from app.api.v1.router import api_router
+from app.core.config import settings
 from app.db.session import ping_database
 from app.scheduler import scheduler, setup_scheduler
 
@@ -44,9 +44,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     y responde un 500 genérico, sin filtrar stacktrace ni detalles internos.
     Las HTTPException NO pasan por aquí: Starlette las maneja con su handler
     dedicado, así que conservan su status y detail."""
-    logger.exception(
-        "Excepción no controlada en %s %s", request.method, request.url.path
-    )
+    logger.exception("Excepción no controlada en %s %s", request.method, request.url.path)
     return JSONResponse(
         status_code=500,
         content={"detail": "Error interno del servidor."},
@@ -63,6 +61,7 @@ async def health() -> JSONResponse:
         status_code=200 if db_ok else 503,
         content={"status": "ok" if db_ok else "error", "database": db_ok},
     )
+
 
 app.add_middleware(
     CORSMiddleware,

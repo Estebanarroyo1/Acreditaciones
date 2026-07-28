@@ -10,6 +10,7 @@ Flow:
   5. Group alerts by (worker_email, worker_id, project_id) and send one email per group.
   6. Insert NotificationLog rows for each sent alert.
 """
+
 import logging
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
@@ -20,7 +21,7 @@ from sqlalchemy.orm import selectinload
 from app.db.session import AsyncSessionLocal
 from app.models.associations import DocumentStatus, WorkerDocument
 from app.models.notification_log import NotificationLog
-from app.services.alert_rules import load_global_pct, effective_pct, is_expiring_soon
+from app.services.alert_rules import effective_pct, is_expiring_soon, load_global_pct
 from app.services.email_service import DocumentAlert, send_alert_email
 
 logger = logging.getLogger(__name__)
@@ -59,7 +60,8 @@ async def run_daily_notifications() -> None:
 
         # ── 2. Filter to those within their alert window ──────────────────── #
         in_window: list[WorkerDocument] = [
-            doc for doc in all_docs
+            doc
+            for doc in all_docs
             if is_expiring_soon(
                 doc.expiry_date,
                 doc.issue_date,
@@ -77,8 +79,7 @@ async def run_daily_notifications() -> None:
 
         # ── 3. Skip already-notified today ───────────────────────────────── #
         already_logged_result = await db.execute(
-            select(NotificationLog.worker_document_id)
-            .where(
+            select(NotificationLog.worker_document_id).where(
                 NotificationLog.worker_document_id.in_([d.id for d in in_window]),
                 NotificationLog.notification_date == today,
             )
@@ -97,7 +98,9 @@ async def run_daily_notifications() -> None:
         for doc in pending:
             email = doc.worker.email
             if not email:
-                logger.warning("Worker %d has no email — skipping document %d", doc.worker_id, doc.id)
+                logger.warning(
+                    "Worker %d has no email — skipping document %d", doc.worker_id, doc.id
+                )
                 continue
             groups[(email, doc.worker_id, doc.project_id)].append(doc)
 
@@ -124,21 +127,28 @@ async def run_daily_notifications() -> None:
             except Exception as exc:
                 logger.error(
                     "SMTP error for worker %d / project %s: %s",
-                    worker_id, project_id, exc, exc_info=True,
+                    worker_id,
+                    project_id,
+                    exc,
+                    exc_info=True,
                 )
                 continue
 
-            for doc, days_remaining in zip(docs, days_list):
-                db.add(NotificationLog(
-                    worker_id=doc.worker_id,
-                    project_id=doc.project_id,
-                    document_type_id=doc.document_type_id,
-                    worker_document_id=doc.id,
-                    threshold_days=days_remaining,  # días restantes al momento del envío
-                    notification_date=today,
-                    recipient_email=email,
-                    sent_at=now_utc,
-                ))
+            # docs y days_list se construyen en paralelo y tienen el mismo largo
+            # por construcción; el zip por defecto (trunca al más corto) es correcto.
+            for doc, days_remaining in zip(docs, days_list):  # noqa: B905
+                db.add(
+                    NotificationLog(
+                        worker_id=doc.worker_id,
+                        project_id=doc.project_id,
+                        document_type_id=doc.document_type_id,
+                        worker_document_id=doc.id,
+                        threshold_days=days_remaining,  # días restantes al momento del envío
+                        notification_date=today,
+                        recipient_email=email,
+                        sent_at=now_utc,
+                    )
+                )
 
             await db.commit()
             sent_count += 1

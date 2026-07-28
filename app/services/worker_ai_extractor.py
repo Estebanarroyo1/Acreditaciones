@@ -29,6 +29,7 @@ async def _to_image(content: bytes, mime: str, filename: str) -> tuple[bytes, st
     if "pdf" in mime or fn.endswith(".pdf"):
         try:
             import fitz
+
             pdf = fitz.open(stream=content, filetype="pdf")
             pix = pdf[0].get_pixmap(matrix=fitz.Matrix(2, 2))
             return pix.tobytes("png"), "image/png"
