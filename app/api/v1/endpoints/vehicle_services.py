@@ -1,11 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.permissions import Module, PermissionLevel, require_module
 from app.db.session import get_db
+from app.api.pagination import Pagination, pagination_params, set_total_count
 from app.models.vehicle import Vehicle
 from app.models.vehicle_document_type import VehicleDocumentType
 from app.models.vehicle_service import VehicleService
@@ -35,13 +36,23 @@ async def _get_service_or_404(service_id: int, db: AsyncSession) -> VehicleServi
 
 @router.get("/", response_model=list[VehicleServiceRead], dependencies=_R)
 async def list_vehicle_services(
+    response: Response,
     active_only: bool = False,
+    pagination: Pagination = Depends(pagination_params),
     db: AsyncSession = Depends(get_db),
 ):
-    q = select(VehicleService).options(selectinload(VehicleService.required_document_types))
+    base = select(VehicleService).options(selectinload(VehicleService.required_document_types))
+    count_q = select(func.count()).select_from(VehicleService)
     if active_only:
-        q = q.where(VehicleService.is_active == True)
-    result = await db.execute(q.order_by(VehicleService.name))
+        base = base.where(VehicleService.is_active == True)
+        count_q = count_q.where(VehicleService.is_active == True)
+    total = await db.scalar(count_q)
+    result = await db.execute(
+        base.order_by(VehicleService.name, VehicleService.id)
+        .limit(pagination.limit)
+        .offset(pagination.offset)
+    )
+    set_total_count(response, total or 0)
     return result.scalars().all()
 
 

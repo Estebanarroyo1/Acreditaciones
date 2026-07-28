@@ -14,6 +14,8 @@ class Vehicle(Base, TimestampMixin):
     __tablename__ = "vehicles"
     __table_args__ = (
         Index("ix_vehicles_license_plate", "license_plate", unique=True),
+        # Cubre el filtro active_only de listados y semáforo global de flota.
+        Index("ix_vehicles_is_active", "is_active"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)

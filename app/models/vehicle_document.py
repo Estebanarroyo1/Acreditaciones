@@ -1,6 +1,6 @@
 from datetime import datetime, date
 
-from sqlalchemy import ForeignKey, DateTime, Date, String, Text, Integer, Enum
+from sqlalchemy import ForeignKey, DateTime, Date, String, Text, Integer, Enum, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin
@@ -12,6 +12,11 @@ _STATUS_TYPE = Enum(DocumentStatus, native_enum=False)
 
 class VehicleDocument(Base, TimestampMixin):
     __tablename__ = "vehicle_documents"
+    # Cubre el batch "documentos por vehículo" (filtro vehicle_id + orden
+    # upload_date desc) del semáforo global de flota, sin N+1.
+    __table_args__ = (
+        Index("ix_vehicle_documents_vehicle_upload", "vehicle_id", "upload_date"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
 

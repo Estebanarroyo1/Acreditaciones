@@ -1,3 +1,4 @@
+import logging
 import os
 from datetime import date, datetime, timezone
 
@@ -17,11 +18,14 @@ from app.models.vehicle_document import VehicleDocument
 from app.models.vehicle_document_type import VehicleDocumentType
 from app.schemas.vehicle_document import VehicleDocumentRead, VehicleDocumentReview
 from app.services.storage import (
+    delete_file,
     read_upload_capped,
     resolve_media_type,
     save_vehicle_upload,
     validate_upload_head,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/vehicle-documents", tags=["vehicle-documents"])
 
@@ -48,8 +52,12 @@ async def ai_scan_vehicle_document(file: UploadFile = File(...)):
         raise HTTPException(status_code=504, detail="El análisis del documento tardó demasiado.")
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Error al contactar OpenAI: {exc}")
+    except Exception:
+        logger.exception("Fallo al contactar OpenAI en ai-scan de vehicle document")
+        raise HTTPException(
+            status_code=502,
+            detail="El servicio de análisis no está disponible, intenta más tarde.",
+        )
 
     return {
         "issue_date": result["issue_date"],
@@ -106,8 +114,12 @@ async def upload_vehicle_document(
             raise HTTPException(status_code=504, detail="El análisis del documento tardó demasiado.")
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"Error al contactar OpenAI: {exc}")
+        except Exception:
+            logger.exception("Fallo al contactar OpenAI al subir vehicle document")
+            raise HTTPException(
+                status_code=502,
+                detail="El servicio de análisis no está disponible, intenta más tarde.",
+            )
 
         # Escudo de Tipo
         if not ai["is_expected_document"]:
@@ -165,7 +177,13 @@ async def upload_vehicle_document(
         status=DocumentStatus.APPROVED,
     )
     db.add(doc)
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception:
+        # El archivo ya está en disco: si el commit falla, evitamos el huérfano.
+        await db.rollback()
+        delete_file(file_path)
+        raise
 
     refreshed = await db.execute(
         select(VehicleDocument)
@@ -260,6 +278,8 @@ async def edit_vehicle_document(
             detail="Formato de fecha inválido. Use YYYY-MM-DD.",
         )
 
+    old_path: str | None = None
+    new_path: str | None = None
     if file is not None:
         # Validate replacement file early (whitelist + magic bytes) before AI.
         await validate_upload_head(file)
@@ -281,8 +301,12 @@ async def edit_vehicle_document(
                 raise HTTPException(status_code=504, detail="El análisis del documento tardó demasiado.")
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc))
-            except Exception as exc:
-                raise HTTPException(status_code=502, detail=f"Error al contactar OpenAI: {exc}")
+            except Exception:
+                logger.exception("Fallo al contactar OpenAI al editar vehicle document")
+                raise HTTPException(
+                    status_code=502,
+                    detail="El servicio de análisis no está disponible, intenta más tarde.",
+                )
 
             # Escudo de Tipo
             if not ai["is_expected_document"]:
@@ -321,6 +345,7 @@ async def edit_vehicle_document(
 
             await file.seek(0)
 
+        old_path = doc.file_path
         new_path, mime_type, file_size = await save_vehicle_upload(
             file, doc.vehicle_id, doc.vehicle_document_type_id
         )
@@ -343,7 +368,15 @@ async def edit_vehicle_document(
     if doc.status != DocumentStatus.REJECTED:
         doc.status = DocumentStatus.APPROVED
 
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        delete_file(new_path)  # archivo nuevo recién escrito → evitar huérfano
+        raise
+    # Commit OK: si reemplazamos el archivo, el anterior queda huérfano.
+    if new_path and old_path and old_path != new_path:
+        delete_file(old_path)
 
     refreshed = await db.execute(
         select(VehicleDocument)

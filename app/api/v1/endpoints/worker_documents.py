@@ -1,3 +1,4 @@
+import logging
 import os
 from datetime import date, datetime, timedelta, timezone
 
@@ -21,12 +22,15 @@ from app.models.associations import (
 from app.models.document_type import DocumentType
 from app.schemas.worker_document import WorkerDocumentRead, WorkerDocumentUpdate
 from app.services.storage import (
+    delete_file,
     read_upload_capped,
     resolve_media_type,
     save_upload,
     validate_upload_head,
 )
 from app.services.worker_documents import resolve_document_dates
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/worker-documents", tags=["worker-documents"])
 
@@ -57,8 +61,12 @@ async def ai_scan_worker_document(
         raise HTTPException(status_code=504, detail="El análisis del documento tardó demasiado.")
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Error al contactar OpenAI: {exc}")
+    except Exception:
+        logger.exception("Fallo al contactar OpenAI en ai-scan de worker document")
+        raise HTTPException(
+            status_code=502,
+            detail="El servicio de análisis no está disponible, intenta más tarde.",
+        )
 
     # When validity_days is configured, ALWAYS compute expiry from issue_date + validity_days.
     # The document text might say "valid 2 years" but the system config takes precedence.
@@ -175,7 +183,13 @@ async def upload_document(
         status=DocumentStatus.PENDING,
     )
     db.add(doc)
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception:
+        # El archivo ya está en disco: si el commit falla, evitamos el huérfano.
+        await db.rollback()
+        delete_file(file_path)
+        raise
 
     # Reload with relationship for the response schema
     refreshed = await db.execute(
@@ -276,8 +290,11 @@ async def edit_document(
         issue_date, expiry_date, file, dt_name, effective_vd
     )
 
+    old_path: str | None = None
+    new_path: str | None = None
     if file is not None:
         # Replace the stored file and reset status to pending review
+        old_path = doc.file_path
         new_path, mime_type, file_size = await save_upload(
             file, doc.project_id, doc.worker_id, doc.document_type_id
         )
@@ -296,7 +313,15 @@ async def edit_document(
         # 0 = explicit clear; 1-100 = set override
         doc.custom_alert_percentage = custom_alert_percentage if custom_alert_percentage > 0 else None
 
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        delete_file(new_path)  # archivo nuevo recién escrito → evitar huérfano
+        raise
+    # Commit OK: si reemplazamos el archivo, el anterior queda huérfano.
+    if new_path and old_path and old_path != new_path:
+        delete_file(old_path)
 
     refreshed = await db.execute(
         select(WorkerDocument)

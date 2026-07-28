@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone
 
 import jwt
@@ -11,7 +12,9 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.models.user import User
 
-_bearer = HTTPBearer(auto_error=True)
+logger = logging.getLogger(__name__)
+
+_bearer = HTTPBearer(auto_error=False)
 _jwks_client: PyJWKClient | None = None
 
 
@@ -41,6 +44,9 @@ async def get_current_user(
         )
         return stub
 
+    if credentials is None:
+        raise HTTPException(status_code=401, detail="No autenticado.")
+
     token = credentials.credentials
     try:
         client = _get_jwks_client()
@@ -53,9 +59,12 @@ async def get_current_user(
             issuer=f"https://login.microsoftonline.com/{settings.ENTRA_TENANT_ID}/v2.0",
         )
     except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expirado.")
+        raise HTTPException(status_code=401, detail="Token inválido o expirado.")
     except jwt.InvalidTokenError as exc:
-        raise HTTPException(status_code=401, detail=f"Token inválido: {exc}")
+        # El detalle interno (motivo exacto del fallo) solo se loggea; nunca se
+        # devuelve al cliente para no filtrar información de la validación.
+        logger.warning("Token JWT inválido: %s", exc)
+        raise HTTPException(status_code=401, detail="Token inválido o expirado.")
 
     oid: str | None = payload.get("oid")
     email: str = payload.get("email") or payload.get("preferred_username") or ""

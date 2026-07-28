@@ -46,12 +46,9 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
     tokenStore.set(token)
 
     if (status === 'loading') return
-    if (status === 'unauthenticated' || !token) {
-      void Promise.resolve().then(() => { setUser(null); setLoading(false) })
-      return
-    }
 
-    fetch(`${BASE}/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
+    const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {}
+    fetch(`${BASE}/auth/me`, { headers })
       .then((r) => (r.ok ? (r.json() as Promise<BackendUser>) : null))
       .then((data) => { setUser(data); setLoading(false) })
       .catch(() => { setUser(null); setLoading(false) })

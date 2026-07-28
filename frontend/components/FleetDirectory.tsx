@@ -85,9 +85,14 @@ function NewVehicleForm({ onCreated, onCancel }: { onCreated: () => void; onCanc
   )
 }
 
+// Tamaño de página para la carga incremental ("Cargar más").
+const PAGE_SIZE = 100
+
 // ── Fleet directory ────────────────────────────────────────────────────────
 export function FleetDirectory() {
   const [fleet, setFleet] = useState<VehicleGlobalStatus[]>([])
+  const [total, setTotal] = useState(0)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [loading, setLoading] = useState(true)
   const [showNew, setShowNew] = useState(false)
   const [activeOnly, setActiveOnly] = useState(true)
@@ -100,24 +105,51 @@ export function FleetDirectory() {
     setLoading(true)
   }
 
+  // Carga la primera página (reinicia la lista). Al montar, cambiar filtro y
+  // tras crear un vehículo.
   const load = useCallback(async () => {
-    setLoading(true)
+    // loading=true se maneja en el bloque de estado derivado (cambio de filtro)
+    // y en el estado inicial; no aquí, para no hacer setState síncrono en el effect.
     try {
-      const data = await api.getVehiclesGlobalStatus(activeOnly)
-      setFleet(data)
+      const { items, total } = await api.getVehiclesGlobalStatus(activeOnly, {
+        limit: PAGE_SIZE,
+        offset: 0,
+      })
+      setFleet(items)
+      setTotal(total)
     } catch {
       setFleet([])
+      setTotal(0)
     } finally {
       setLoading(false)
     }
   }, [activeOnly])
 
   useEffect(() => {
-    api.getVehiclesGlobalStatus(activeOnly)
-      .then(data => setFleet(data))
-      .catch(() => setFleet([]))
-      .finally(() => setLoading(false))
+    let cancelled = false
+    api.getVehiclesGlobalStatus(activeOnly, { limit: PAGE_SIZE, offset: 0 })
+      .then(({ items, total }) => { if (!cancelled) { setFleet(items); setTotal(total) } })
+      .catch(() => { if (!cancelled) { setFleet([]); setTotal(0) } })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
   }, [activeOnly])
+
+  // Carga incremental: agrega la siguiente página al final.
+  const loadMore = useCallback(async () => {
+    setLoadingMore(true)
+    try {
+      const { items, total } = await api.getVehiclesGlobalStatus(activeOnly, {
+        limit: PAGE_SIZE,
+        offset: fleet.length,
+      })
+      setFleet((prev) => [...prev, ...items])
+      setTotal(total)
+    } catch {
+      /* ignore */
+    } finally {
+      setLoadingMore(false)
+    }
+  }, [activeOnly, fleet.length])
 
   const filtered = fleet.filter((v) => {
     if (!search) return true
@@ -240,6 +272,19 @@ export function FleetDirectory() {
             )}
           </tbody>
         </table>
+
+        {/* ── Cargar más (carga incremental) ─────────────────────────────── */}
+        {!loading && fleet.length < total && (
+          <div className="flex justify-center py-3 border-t border-slate-200">
+            <button
+              onClick={loadMore}
+              disabled={loadingMore}
+              className="px-4 py-1.5 text-[11px] font-semibold rounded-none transition-colors bg-[#003f7a] text-white hover:bg-[#005096] disabled:opacity-50"
+            >
+              {loadingMore ? 'Cargando…' : `Cargar más (${fleet.length} de ${total})`}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )

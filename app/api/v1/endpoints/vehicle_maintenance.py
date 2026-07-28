@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.permissions import Module, PermissionLevel, require_module
 from app.db.session import get_db
+from app.api.pagination import Pagination, pagination_params, set_total_count
 from app.models.vehicle_maintenance import VehicleMaintenance
 from app.schemas.vehicle_maintenance import (
     VehicleMaintenanceCreate,
@@ -19,14 +20,24 @@ _W = [Depends(require_module(Module.vehiculos, PermissionLevel.write))]
 
 @router.get("/", response_model=list[VehicleMaintenanceRead], dependencies=_R)
 async def list_vehicle_maintenance(
+    response: Response,
     vehicle_id: int,
+    pagination: Pagination = Depends(pagination_params),
     db: AsyncSession = Depends(get_db),
 ):
+    total = await db.scalar(
+        select(func.count())
+        .select_from(VehicleMaintenance)
+        .where(VehicleMaintenance.vehicle_id == vehicle_id)
+    )
     result = await db.execute(
         select(VehicleMaintenance)
         .where(VehicleMaintenance.vehicle_id == vehicle_id)
         .order_by(VehicleMaintenance.id)
+        .limit(pagination.limit)
+        .offset(pagination.offset)
     )
+    set_total_count(response, total or 0)
     return result.scalars().all()
 
 

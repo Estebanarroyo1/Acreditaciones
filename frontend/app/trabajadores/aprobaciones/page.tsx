@@ -12,8 +12,8 @@ export default function AprobacionesPage() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    api.getWorkersGlobalStatus()
-      .then(data => setWorkers(data))
+    api.getWorkersGlobalStatus({ limit: 500 })
+      .then(({ items }) => setWorkers(items))
       .catch(() => setError('No se pudo cargar la bandeja de aprobaciones.'))
       .finally(() => setLoading(false))
   }, [])

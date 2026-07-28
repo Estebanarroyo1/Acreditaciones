@@ -12,8 +12,8 @@ export default function MantencionPage() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    api.getVehiclesGlobalStatus()
-      .then(data => setVehicles(data))
+    api.getVehiclesGlobalStatus(true, { limit: 500 })
+      .then(({ items }) => setVehicles(items))
       .catch(() => setError('No se pudo cargar el estado de mantención.'))
       .finally(() => setLoading(false))
   }, [])

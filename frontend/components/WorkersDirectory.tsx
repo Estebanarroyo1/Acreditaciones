@@ -222,9 +222,14 @@ function DeleteDirectoryConfirmDialog({
   )
 }
 
+// Tamaño de página para la carga incremental ("Cargar más").
+const PAGE_SIZE = 100
+
 // ── Main component ─────────────────────────────────────────────────────────
 export function WorkersDirectory({ projects }: { projects: Project[] }) {
   const [workers, setWorkers] = useState<WorkerGlobalStatus[]>([])
+  const [total, setTotal] = useState(0)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [filterLight, setFilterLight] = useState<'all' | 'green' | 'yellow' | 'red'>('all')
@@ -246,35 +251,66 @@ export function WorkersDirectory({ projects }: { projects: Project[] }) {
     setLoading(true)
   }
 
+  // Carga la primera página (reinicia la lista). Se usa al montar, al cambiar
+  // filtros y tras crear/eliminar trabajadores.
   const loadWorkers = useCallback(async () => {
-    setLoading(true)
+    // loading=true se maneja en el bloque de estado derivado (cambio de filtros)
+    // y en el estado inicial; no aquí, para no hacer setState síncrono en el effect.
     try {
-      const data = await api.getWorkersGlobalStatus({
+      const { items, total } = await api.getWorkersGlobalStatus({
         status: viewStatus,
         ...(locationFilter !== 'all' && { location: locationFilter }),
+        limit: PAGE_SIZE,
+        offset: 0,
       })
-      setWorkers(data)
+      setWorkers(items)
+      setTotal(total)
     } catch {
       setWorkers([])
+      setTotal(0)
     } finally {
       setLoading(false)
     }
   }, [viewStatus, locationFilter])
 
   useEffect(() => {
+    let cancelled = false
     api.getWorkersGlobalStatus({
       status: viewStatus,
       ...(locationFilter !== 'all' && { location: locationFilter }),
+      limit: PAGE_SIZE,
+      offset: 0,
     })
-      .then(data => setWorkers(data))
-      .catch(() => setWorkers([]))
-      .finally(() => setLoading(false))
+      .then(({ items, total }) => { if (!cancelled) { setWorkers(items); setTotal(total) } })
+      .catch(() => { if (!cancelled) { setWorkers([]); setTotal(0) } })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
   }, [viewStatus, locationFilter])
+
+  // Carga incremental: agrega la siguiente página al final de la lista.
+  const loadMore = useCallback(async () => {
+    setLoadingMore(true)
+    try {
+      const { items, total } = await api.getWorkersGlobalStatus({
+        status: viewStatus,
+        ...(locationFilter !== 'all' && { location: locationFilter }),
+        limit: PAGE_SIZE,
+        offset: workers.length,
+      })
+      setWorkers((prev) => [...prev, ...items])
+      setTotal(total)
+    } catch {
+      /* ignore */
+    } finally {
+      setLoadingMore(false)
+    }
+  }, [viewStatus, locationFilter, workers.length])
 
   const handleRestore = async (workerId: number) => {
     try {
       await api.restoreWorker(workerId)
       setWorkers((prev) => prev.filter((w) => w.worker_id !== workerId))
+      setTotal((t) => Math.max(0, t - 1))
     } catch { /* ignore */ }
   }
 
@@ -284,6 +320,7 @@ export function WorkersDirectory({ projects }: { projects: Project[] }) {
     try {
       await api.deleteWorker(workerToDelete.worker_id)
       setWorkers((prev) => prev.filter((w) => w.worker_id !== workerToDelete.worker_id))
+      setTotal((t) => Math.max(0, t - 1))
       setWorkerToDelete(null)
     } catch { /* ignore */ } finally {
       setDeleting(false)
@@ -521,6 +558,19 @@ export function WorkersDirectory({ projects }: { projects: Project[] }) {
             </tbody>
           </table>
         </div>
+
+        {/* ── Cargar más (carga incremental) ─────────────────────────────── */}
+        {!loading && workers.length < total && (
+          <div className="flex justify-center py-4 border-t border-slate-100">
+            <button
+              onClick={loadMore}
+              disabled={loadingMore}
+              className="px-4 py-2 text-[11px] font-semibold rounded-none transition-colors bg-[#003f7a] text-white hover:bg-[#005096] disabled:opacity-50"
+            >
+              {loadingMore ? 'Cargando…' : `Cargar más (${workers.length} de ${total})`}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* ── Modals ───────────────────────────────────────────────────────── */}

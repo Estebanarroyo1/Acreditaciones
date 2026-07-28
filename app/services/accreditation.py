@@ -248,22 +248,27 @@ async def get_workers_global_status(
     db: AsyncSession,
     status: str = "active",
     location: WorkLocation | None = None,
+    limit: int | None = None,
+    offset: int | None = None,
 ) -> list[WorkerGlobalStatus]:
     today = date.today()
     global_pct = await load_global_pct(db)
 
-    # Query 1: workers + assignments
+    # Query 1: workers + assignments (orden estable con Worker.id de desempate)
     query = select(Worker).where(Worker.is_active == (status == "active"))
     if location is not None:
         query = query.where(Worker.work_location == location)
-    workers_result = await db.execute(
+    query = (
         query
         .options(
             selectinload(Worker.project_assignments)
             .selectinload(WorkerProject.project)
         )
-        .order_by(Worker.last_name, Worker.first_name)
+        .order_by(Worker.last_name, Worker.first_name, Worker.id)
     )
+    if limit is not None:
+        query = query.limit(limit).offset(offset or 0)
+    workers_result = await db.execute(query)
     workers = workers_result.scalars().all()
     if not workers:
         return []

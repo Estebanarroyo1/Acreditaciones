@@ -49,6 +49,21 @@ async function get<T>(path: string): Promise<T> {
   return res.json() as Promise<T>
 }
 
+/** GET paginado: devuelve la lista plana + el total (header X-Total-Count). */
+export interface Paged<T> {
+  items: T[]
+  total: number
+}
+async function getPaged<T>(path: string): Promise<Paged<T>> {
+  const res = await fetch(`${BASE}${path}`, { cache: 'no-store', headers: authHeaders() })
+  handle401(res)
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+  const items = (await res.json()) as T[]
+  const header = res.headers.get('X-Total-Count')
+  const total = header != null ? Number(header) : items.length
+  return { items, total }
+}
+
 async function post<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method: 'POST',
@@ -123,6 +138,8 @@ export const api = {
     const q = new URLSearchParams()
     if (filters?.status) q.set('status', filters.status)
     if (filters?.location) q.set('location', filters.location)
+    // Selector/dropdown: pedir hasta el tope permitido para no truncar.
+    q.set('limit', '500')
     return get<Worker[]>(`/workers/?${q}`)
   },
   createWorker: (payload: CreateWorkerPayload) =>
@@ -164,11 +181,18 @@ export const api = {
   // Accreditation
   getAccreditation: (workerId: number, projectId: number) =>
     get<AccreditationStatus>(`/accreditation/${workerId}/${projectId}`),
-  getWorkersGlobalStatus: (filters?: { status?: 'active' | 'archived'; location?: 'planta' | 'obra' }) => {
+  getWorkersGlobalStatus: (filters?: {
+    status?: 'active' | 'archived'
+    location?: 'planta' | 'obra'
+    limit?: number
+    offset?: number
+  }): Promise<Paged<WorkerGlobalStatus>> => {
     const q = new URLSearchParams()
     if (filters?.status) q.set('status', filters.status)
     if (filters?.location) q.set('location', filters.location)
-    return get<WorkerGlobalStatus[]>(`/accreditation/workers/global-status?${q}`)
+    if (filters?.limit != null) q.set('limit', String(filters.limit))
+    if (filters?.offset != null) q.set('offset', String(filters.offset))
+    return getPaged<WorkerGlobalStatus>(`/accreditation/workers/global-status?${q}`)
   },
 
   // Document URLs (for use in <a href> / <iframe src> tags)
@@ -266,7 +290,7 @@ export const api = {
 
   // Vehicles
   getVehicles: (activeOnly = true) =>
-    get<Vehicle[]>(`/vehicles/?active_only=${activeOnly}`),
+    get<Vehicle[]>(`/vehicles/?active_only=${activeOnly}&limit=500`),
   createVehicle: (payload: CreateVehiclePayload) =>
     post<Vehicle>('/vehicles/', payload),
   updateVehicle: (id: number, payload: Partial<CreateVehiclePayload & { is_active: boolean }>) =>
@@ -340,7 +364,7 @@ export const api = {
 
   // Vehicle maintenance
   getVehicleMaintenance: (vehicleId: number) =>
-    get<CreateVehicleMaintenancePayload[]>(`/vehicle-maintenance/?vehicle_id=${vehicleId}`),
+    get<CreateVehicleMaintenancePayload[]>(`/vehicle-maintenance/?vehicle_id=${vehicleId}&limit=500`),
   createVehicleMaintenance: (payload: CreateVehicleMaintenancePayload) =>
     post<unknown>('/vehicle-maintenance/', payload),
   updateVehicleMaintenance: (id: number, payload: Partial<CreateVehicleMaintenancePayload & { is_active: boolean; last_service_date?: string; last_service_meter?: number }>) =>
@@ -348,8 +372,16 @@ export const api = {
   deleteVehicleMaintenance: (id: number) => del(`/vehicle-maintenance/${id}`),
 
   // Vehicle accreditation
-  getVehiclesGlobalStatus: (activeOnly = true) =>
-    get<VehicleGlobalStatus[]>(`/vehicle-accreditation/global-status?active_only=${activeOnly}`),
+  getVehiclesGlobalStatus: (
+    activeOnly = true,
+    opts?: { limit?: number; offset?: number },
+  ): Promise<Paged<VehicleGlobalStatus>> => {
+    const q = new URLSearchParams()
+    q.set('active_only', String(activeOnly))
+    if (opts?.limit != null) q.set('limit', String(opts.limit))
+    if (opts?.offset != null) q.set('offset', String(opts.offset))
+    return getPaged<VehicleGlobalStatus>(`/vehicle-accreditation/global-status?${q}`)
+  },
   getVehicleFullProfile: (vehicleId: number) =>
     get<VehicleFullProfile>(`/vehicle-accreditation/${vehicleId}`),
 

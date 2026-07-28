@@ -1,12 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.permissions import Module, PermissionLevel, require_module
 from app.db.session import get_db
 from app.models.vehicle import Vehicle
+from app.models.vehicle_document import VehicleDocument
 from app.schemas.vehicle import VehicleCreate, VehicleUpdate, VehicleRead
+from app.services.storage import delete_file
+from app.api.pagination import Pagination, pagination_params, set_total_count
 
 router = APIRouter(prefix="/vehicles", tags=["vehicles"])
 
@@ -16,13 +19,23 @@ _W = [Depends(require_module(Module.vehiculos, PermissionLevel.write))]
 
 @router.get("/", response_model=list[VehicleRead], dependencies=_R)
 async def list_vehicles(
+    response: Response,
     active_only: bool = True,
+    pagination: Pagination = Depends(pagination_params),
     db: AsyncSession = Depends(get_db),
 ):
-    q = select(Vehicle)
+    base = select(Vehicle)
+    count_q = select(func.count()).select_from(Vehicle)
     if active_only:
-        q = q.where(Vehicle.is_active == True)
-    result = await db.execute(q.order_by(Vehicle.license_plate))
+        base = base.where(Vehicle.is_active == True)
+        count_q = count_q.where(Vehicle.is_active == True)
+    total = await db.scalar(count_q)
+    result = await db.execute(
+        base.order_by(Vehicle.license_plate, Vehicle.id)
+        .limit(pagination.limit)
+        .offset(pagination.offset)
+    )
+    set_total_count(response, total or 0)
     return result.scalars().all()
 
 
@@ -98,5 +111,14 @@ async def delete_vehicle(vehicle_id: int, db: AsyncSession = Depends(get_db)):
     vehicle = await db.get(Vehicle, vehicle_id)
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vehículo no encontrado.")
+    # Recolectar rutas de los documentos ANTES del delete (la cascada de BD los
+    # borra pero deja los archivos físicos huérfanos).
+    paths_result = await db.execute(
+        select(VehicleDocument.file_path).where(VehicleDocument.vehicle_id == vehicle_id)
+    )
+    file_paths = [p for p in paths_result.scalars().all() if p]
     await db.delete(vehicle)
     await db.commit()
+    # Best effort: la operación de BD ya se completó; limpiar archivos físicos.
+    for path in file_paths:
+        delete_file(path)

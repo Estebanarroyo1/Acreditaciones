@@ -7,9 +7,9 @@ from typing import Literal
 
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -28,6 +28,8 @@ from app.services.accreditation import (
     get_workers_base_requirements_map,
 )
 from app.services.workers import process_bulk_upload
+from app.services.storage import delete_file
+from app.api.pagination import Pagination, pagination_params, set_total_count
 
 router = APIRouter(prefix="/workers", tags=["workers"])
 
@@ -43,15 +45,27 @@ def _sanitize_filename(name: str) -> str:
 
 @router.get("/", response_model=list[WorkerRead], dependencies=_R)
 async def list_workers(
+    response: Response,
     status: Literal["active", "archived"] = Query("active"),
     location: Literal["planta", "obra"] | None = Query(None),
+    pagination: Pagination = Depends(pagination_params),
     db: AsyncSession = Depends(get_db),
 ):
-    query = select(Worker).where(Worker.is_active == (status == "active"))
-    if location is not None:
-        location_enum = WorkLocation.PLANTA if location == "planta" else WorkLocation.OBRA
-        query = query.where(Worker.work_location == location_enum)
-    result = await db.execute(query)
+    location_enum = (
+        WorkLocation.PLANTA if location == "planta"
+        else WorkLocation.OBRA if location == "obra"
+        else None
+    )
+    base = select(Worker).where(Worker.is_active == (status == "active"))
+    count_q = select(func.count()).select_from(Worker).where(Worker.is_active == (status == "active"))
+    if location_enum is not None:
+        base = base.where(Worker.work_location == location_enum)
+        count_q = count_q.where(Worker.work_location == location_enum)
+
+    total = await db.scalar(count_q)
+    result = await db.execute(
+        base.order_by(Worker.id).limit(pagination.limit).offset(pagination.offset)
+    )
     workers = result.scalars().all()
     compliance = await get_workers_base_requirements_map(db)
     out = []
@@ -59,6 +73,7 @@ async def list_workers(
         item = WorkerRead.model_validate(w)
         item.meets_base_requirements = compliance.get(w.id, True)
         out.append(item)
+    set_total_count(response, total or 0)
     return out
 
 
@@ -339,8 +354,17 @@ async def delete_worker(worker_id: int, db: AsyncSession = Depends(get_db)):
     worker = await db.get(Worker, worker_id)
     if not worker:
         raise HTTPException(status_code=404, detail="Trabajador no encontrado.")
+    # Recolectar rutas de los documentos ANTES del delete (la cascada de BD los
+    # borra pero deja los archivos físicos huérfanos).
+    paths_result = await db.execute(
+        select(WorkerDocument.file_path).where(WorkerDocument.worker_id == worker_id)
+    )
+    file_paths = [p for p in paths_result.scalars().all() if p]
     await db.delete(worker)
     await db.commit()
+    # Best effort: la operación de BD ya se completó; limpiar archivos físicos.
+    for path in file_paths:
+        delete_file(path)
 
 
 @router.post(

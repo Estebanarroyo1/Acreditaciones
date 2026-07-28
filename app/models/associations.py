@@ -8,7 +8,7 @@ Association / junction tables for the many-to-many relationships:
 import enum
 from datetime import datetime, date
 from sqlalchemy import (
-    ForeignKey, DateTime, Date, String, Text, Boolean, Enum, UniqueConstraint
+    ForeignKey, DateTime, Date, String, Text, Boolean, Enum, Index, UniqueConstraint
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -84,6 +84,11 @@ class WorkerDocument(Base, TimestampMixin):
     """
 
     __tablename__ = "worker_documents"
+    # Cubre "último documento por (worker, tipo)": filtro worker_id + orden por
+    # upload_date desc del semáforo global y los lookups de acreditación.
+    __table_args__ = (
+        Index("ix_worker_documents_worker_upload", "worker_id", "upload_date"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
 

@@ -249,11 +249,19 @@ async def get_vehicle_full_profile(vehicle_id: int, db: AsyncSession) -> Vehicle
     )
 
 
-async def get_vehicles_global_status(db: AsyncSession, active_only: bool = True) -> list[VehicleGlobalStatus]:
+async def get_vehicles_global_status(
+    db: AsyncSession,
+    active_only: bool = True,
+    limit: int | None = None,
+    offset: int | None = None,
+) -> list[VehicleGlobalStatus]:
     q = select(Vehicle)
     if active_only:
         q = q.where(Vehicle.is_active == True)
-    result = await db.execute(q.order_by(Vehicle.license_plate))
+    q = q.order_by(Vehicle.license_plate, Vehicle.id)  # orden estable
+    if limit is not None:
+        q = q.limit(limit).offset(offset or 0)
+    result = await db.execute(q)
     vehicles = result.scalars().all()
 
     global_days = await _load_global_alert_days(db)
@@ -266,14 +274,36 @@ async def get_vehicles_global_status(db: AsyncSession, active_only: bool = True)
     all_types_by_id = {vdt.id: vdt for vdt in all_doc_types}
     required_types = [vdt for vdt in all_doc_types if vdt.is_required_base]
 
+    if not vehicles:
+        return []
+
+    # ── Batch (evita N+1): un solo query de documentos y uno de mantenciones para
+    # TODA la página de vehículos, en vez de dos queries por vehículo. ────────────
+    vehicle_ids = [v.id for v in vehicles]
+
+    docs_result = await db.execute(
+        select(VehicleDocument)
+        .where(VehicleDocument.vehicle_id.in_(vehicle_ids))
+        .options(selectinload(VehicleDocument.vehicle_document_type))
+        .order_by(VehicleDocument.upload_date.desc())
+    )
+    docs_by_vehicle: dict[int, list[VehicleDocument]] = {}
+    for doc in docs_result.scalars().all():
+        docs_by_vehicle.setdefault(doc.vehicle_id, []).append(doc)
+
+    maints_result = await db.execute(
+        select(VehicleMaintenance).where(
+            VehicleMaintenance.vehicle_id.in_(vehicle_ids),
+            VehicleMaintenance.is_active == True,
+        )
+    )
+    maints_by_vehicle: dict[int, list[VehicleMaintenance]] = {}
+    for m in maints_result.scalars().all():
+        maints_by_vehicle.setdefault(m.vehicle_id, []).append(m)
+
     statuses: list[VehicleGlobalStatus] = []
     for vehicle in vehicles:
-        docs_result = await db.execute(
-            select(VehicleDocument)
-            .where(VehicleDocument.vehicle_id == vehicle.id)
-            .options(selectinload(VehicleDocument.vehicle_document_type))
-        )
-        all_docs = docs_result.scalars().all()
+        all_docs = docs_by_vehicle.get(vehicle.id, [])
 
         latest_doc: dict[int, VehicleDocument] = {}
         for doc in all_docs:
@@ -284,13 +314,7 @@ async def get_vehicles_global_status(db: AsyncSession, active_only: bool = True)
         required_checks = _build_required_checks(required_types, latest_doc, today, global_days)
         additional_checks = _build_additional_checks(all_types_by_id, latest_doc, today, global_days)
 
-        maints_result = await db.execute(
-            select(VehicleMaintenance).where(
-                VehicleMaintenance.vehicle_id == vehicle.id,
-                VehicleMaintenance.is_active == True,
-            )
-        )
-        maints = maints_result.scalars().all()
+        maints = maints_by_vehicle.get(vehicle.id, [])
         maint_lights = [
             _maintenance_light(m.current_meter, m.next_service_meter, m.last_service_meter, global_days)
             for m in maints

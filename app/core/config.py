@@ -1,4 +1,9 @@
+import logging
+
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 
 # ── Política de archivos permitidos (defensa contra XSS almacenado vía upload) ──
@@ -29,6 +34,10 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "Plataforma de Acreditaciones"
     API_V1_PREFIX: str = "/api/v1"
     DEBUG: bool = False
+    # Entorno de ejecución. En "production" se activan los candados de seguridad:
+    # se prohíbe AUTH_DISABLED, se desactivan /docs y /redoc, y se advierte si
+    # CORS_ORIGINS contiene localhost.
+    ENVIRONMENT: str = "development"
 
     # Database
     POSTGRES_SERVER: str = "localhost"
@@ -76,6 +85,30 @@ class Settings(BaseSettings):
     ADMIN_EMAILS: str = ""  # comma-separated list of emails that get is_admin=True on first login
     # ⚠️ NEVER set AUTH_DISABLED=True in production — it bypasses all authentication
     AUTH_DISABLED: bool = False
+
+    @property
+    def is_production(self) -> bool:
+        return self.ENVIRONMENT.strip().lower() == "production"
+
+    @model_validator(mode="after")
+    def _enforce_production_locks(self) -> "Settings":
+        if self.is_production:
+            # Candado duro: jamás arrancar en producción con la auth desactivada.
+            if self.AUTH_DISABLED:
+                raise ValueError(
+                    "ENVIRONMENT=production con AUTH_DISABLED=true está prohibido: "
+                    "esto desactivaría toda la autenticación. Configura "
+                    "AUTH_DISABLED=false para arrancar en producción."
+                )
+            # Aviso (no bloqueo): CORS con localhost en producción suele ser un error.
+            localhost_origins = [o for o in self.CORS_ORIGINS if "localhost" in o]
+            if localhost_origins:
+                logger.warning(
+                    "ENVIRONMENT=production pero CORS_ORIGINS contiene orígenes "
+                    "localhost (%s). Revisa la configuración de CORS para producción.",
+                    ", ".join(localhost_origins),
+                )
+        return self
 
 
 settings = Settings()

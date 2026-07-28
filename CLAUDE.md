@@ -133,8 +133,13 @@ Cascada de porcentaje en tres niveles:
 ENTRA_TENANT_ID=    # GUID del tenant de Azure
 ENTRA_CLIENT_ID=    # GUID del app registration
 ADMIN_EMAILS=       # comma-separated; reciben is_admin=True al primer login
-AUTH_DISABLED=false # ⚠️ NUNCA true en producción
+AUTH_DISABLED=false # ⚠️ NUNCA true en producción (ver candado ENVIRONMENT)
+ENVIRONMENT=development  # development | production
 ```
+
+Con `ENVIRONMENT=production` la app **se niega a arrancar** si `AUTH_DISABLED=true`
+(candado en `app/core/config.py`, validado al construir `Settings`). Ver la sección
+"Tolerancia a fallas e higiene de errores".
 
 ### Configuración del App Registration en Azure
 La App Registration debe tener el scope `access_as_user` expuesto para que el frontend pueda solicitar tokens con audiencia `api://<CLIENT_ID>`:
@@ -214,6 +219,49 @@ IA en upload/edit) están protegidos:
   usuario/minuto; al exceder → **429**. Es un contador **en memoria por proceso**:
   si se corre uvicorn con múltiples workers, migrar a Redis (contador compartido).
 
+## Tolerancia a fallas e higiene de errores
+
+### Manejador global de excepciones (`app/main.py`)
+- `@app.exception_handler(Exception)` captura cualquier excepción **no controlada**,
+  la loggea completa con `logger.exception` (incluye `method` y `path`) y responde un
+  **500 genérico** `{"detail": "Error interno del servidor."}` — nunca stacktrace ni
+  detalles internos.
+- Las `HTTPException` **no** pasan por este handler (Starlette las maneja con su handler
+  dedicado): conservan su `status_code` y `detail` intactos.
+
+### Mensajes sanitizados (no filtrar internals)
+- Nunca poner el objeto de excepción en `detail=` (`f"...: {exc}"`). Patrón: **loggear**
+  el detalle (`logger.warning`/`logger.exception`) y **responder** un mensaje genérico.
+- `auth.py`: token inválido/expirado → log + respuesta `"Token inválido o expirado."`
+- Endpoints IA (`/ai-scan`, upload/edit): fallo al contactar OpenAI → log + **502**
+  `"El servicio de análisis no está disponible, intenta más tarde."`
+
+### Health check (`GET /health`)
+- **Root-level, sin autenticación y fuera del prefijo `/api/v1`** (para load balancers /
+  UptimeRobot). Ejecuta `ping_database()` (`SELECT 1` con timeout corto vía
+  `asyncio.wait_for`, en `app/db/session.py`).
+- BD responde → **200** `{"status": "ok", "database": true}`.
+- BD caída/timeout → **503** `{"status": "error", "database": false}`.
+
+### Candado de producción (`app/core/config.py`)
+- `ENVIRONMENT` (`development` | `production`, default `development`), con
+  `settings.is_production`.
+- Un `@model_validator(mode="after")` impone en `production`:
+  1. `AUTH_DISABLED=true` → **la app se niega a arrancar** (`ValidationError` al
+     construir `Settings`).
+  2. `main.py` desactiva `/docs` y `/redoc` (`docs_url=None`, `redoc_url=None`).
+  3. Si `CORS_ORIGINS` contiene `localhost` → solo **warning** en logs (no bloquea).
+
+### Consistencia archivo↔BD en subidas y borrados
+- Helper `delete_file(path)` en `storage.py`: unlink **best effort** (nunca lanza; loggea
+  warning si falla).
+- **Upload / edit:** el archivo se escribe a disco *antes* del commit. Si el commit falla
+  → `rollback` + `delete_file()` del archivo recién escrito (evita huérfanos). En un
+  **reemplazo** exitoso (edit con archivo nuevo) se borra además el archivo anterior.
+- **DELETE de worker / vehicle:** antes del `db.delete` se recolectan los `file_path` de
+  los documentos (la cascada de BD los borra pero deja los archivos); tras el commit se
+  hace `delete_file()` de cada uno (best effort; el borrado de BD siempre se completa).
+
 ## Reglas para futuras sesiones
 
 1. **Migraciones:** Nunca editar archivos en `migrations/versions/` ya existentes. Siempre crear una nueva con `alembic revision --autogenerate`.
@@ -224,3 +272,4 @@ IA en upload/edit) están protegidos:
 6. **Diseño visual:** El sistema usa estilo SAP Fiori ERP — fondos blancos, tabs con `border-b-2 border-[#003f7a]`, tipografía densa (`text-[11px]`), sin dark mode.
 7. **Async everywhere:** Todos los servicios y endpoints son `async def`. No usar `.execute()` síncrono de SQLAlchemy.
 8. **Subida de archivos:** Toda subida nueva debe pasar por `validate_upload()` (lista blanca + magic bytes) y guardar el MIME derivado de la firma, nunca `file.content_type`. Al servir, usar `resolve_media_type()` + header `nosniff`. Ver "Política de archivos permitidos".
+9. **Higiene de errores:** Nunca devolver `{exc}` ni stacktraces en `detail=`; loggear el detalle y responder un mensaje genérico. Toda subida que escriba a disco debe limpiar el archivo si el commit falla, y todo borrado/reemplazo de documento debe borrar el archivo físico (best effort). Ver "Tolerancia a fallas e higiene de errores".

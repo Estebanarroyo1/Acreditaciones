@@ -1,3 +1,4 @@
+import logging
 import shutil
 import tempfile
 import uuid
@@ -11,6 +12,8 @@ from app.core.config import (
     EXTENSION_TO_MIME,
     settings,
 )
+
+logger = logging.getLogger(__name__)
 
 # Tamaño de chunk para lectura en streaming. Nunca mantenemos en RAM más que
 # un múltiplo pequeño de este valor.
@@ -69,6 +72,24 @@ def validate_upload(content: bytes, filename: str) -> str:
         )
 
     return EXTENSION_TO_MIME[ext]
+
+
+def delete_file(file_path: str | None) -> bool:
+    """Elimina un archivo del disco en modo *best effort*: nunca lanza.
+
+    Devuelve True si el archivo se borró (o ya no existía), False si el unlink
+    falló (se loggea un warning). Se usa para mantener la consistencia
+    archivo↔BD: limpiar huérfanos cuando un commit falla y borrar el archivo
+    físico cuando se elimina/reemplaza su registro.
+    """
+    if not file_path:
+        return True
+    try:
+        Path(file_path).unlink(missing_ok=True)
+        return True
+    except OSError as exc:
+        logger.warning("No se pudo eliminar el archivo '%s': %s", file_path, exc)
+        return False
 
 
 def resolve_media_type(mime_type: str | None, filename: str | None) -> str | None:
