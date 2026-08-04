@@ -2,7 +2,6 @@
 
 import { createContext, useContext, useState, type ReactNode } from 'react'
 import { usePathname } from 'next/navigation'
-import { signOut } from 'next-auth/react'
 import Link from 'next/link'
 import { usePermissions } from '@/lib/permissions'
 
@@ -107,7 +106,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [view, setView] = useState<ActiveView>('projects')
   const pathname = usePathname()
   const isRoot = pathname === '/'
-  const { user, isAdmin, canRead, loading } = usePermissions()
+  const { user, isAdmin, canRead, loading, logout } = usePermissions()
 
   const showWorkers = canRead('trabajadores')
   const showFleet   = canRead('vehiculos')
@@ -155,7 +154,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                   {user.full_name ?? user.email}
                 </span>
                 <button
-                  onClick={() => signOut({ callbackUrl: '/login' })}
+                  onClick={() => { void logout() }}
                   className="text-white/50 hover:text-white text-[11px] underline underline-offset-2 transition-colors"
                 >
                   Cerrar sesión

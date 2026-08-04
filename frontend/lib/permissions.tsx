@@ -1,8 +1,9 @@
 'use client'
 
 import { createContext, useContext, useEffect, useState } from 'react'
-import { useSession } from 'next-auth/react'
+import { usePathname, useRouter } from 'next/navigation'
 import { tokenStore } from './token-store'
+import { clearSession, loadSessionToken } from './session'
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000/api/v1'
 
@@ -17,6 +18,7 @@ export interface BackendUser {
   full_name: string | null
   is_admin: boolean
   is_active: boolean
+  must_change_password: boolean
   permissions: BackendPermission[]
 }
 
@@ -26,6 +28,7 @@ interface PermissionsCtx {
   canRead: (module: string) => boolean
   canWrite: (module: string) => boolean
   loading: boolean
+  logout: () => Promise<void>
 }
 
 const Ctx = createContext<PermissionsCtx>({
@@ -34,25 +37,72 @@ const Ctx = createContext<PermissionsCtx>({
   canRead: () => false,
   canWrite: () => false,
   loading: true,
+  logout: async () => {},
 })
 
 export function PermissionsProvider({ children }: { children: React.ReactNode }) {
-  const { data: session, status } = useSession()
   const [user, setUser] = useState<BackendUser | null>(null)
   const [loading, setLoading] = useState(true)
+  const router = useRouter()
+  const pathname = usePathname()
 
+  // Rehidrata el token desde la cookie httpOnly y carga el usuario desde /auth/me.
   useEffect(() => {
-    const token = (session as { accessToken?: string } | null)?.accessToken ?? null
-    tokenStore.set(token)
+    let active = true
+    ;(async () => {
+      const token = await loadSessionToken()
+      tokenStore.set(token)
+      if (!token) {
+        if (active) {
+          setUser(null)
+          setLoading(false)
+        }
+        return
+      }
+      try {
+        const res = await fetch(`${BASE}/auth/me`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (!res.ok) {
+          tokenStore.set(null)
+          if (active) {
+            setUser(null)
+            setLoading(false)
+          }
+          return
+        }
+        const data = (await res.json()) as BackendUser
+        if (active) {
+          setUser(data)
+          setLoading(false)
+        }
+      } catch {
+        if (active) {
+          setUser(null)
+          setLoading(false)
+        }
+      }
+    })()
+    return () => {
+      active = false
+    }
+  }, [])
 
-    if (status === 'loading') return
+  // Guard de primer ingreso: si must_change_password es true, el usuario no puede
+  // navegar a ninguna otra ruta — se le fuerza a /cambiar-contrasena.
+  useEffect(() => {
+    if (loading || !user) return
+    if (user.must_change_password && pathname !== '/cambiar-contrasena') {
+      router.replace('/cambiar-contrasena')
+    }
+  }, [loading, user, pathname, router])
 
-    const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {}
-    fetch(`${BASE}/auth/me`, { headers })
-      .then((r) => (r.ok ? (r.json() as Promise<BackendUser>) : null))
-      .then((data) => { setUser(data); setLoading(false) })
-      .catch(() => { setUser(null); setLoading(false) })
-  }, [session, status])
+  const logout = async (): Promise<void> => {
+    await clearSession()
+    tokenStore.set(null)
+    setUser(null)
+    router.replace('/login')
+  }
 
   const canRead = (module: string): boolean => {
     if (!user) return false
@@ -67,7 +117,9 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
   }
 
   return (
-    <Ctx.Provider value={{ user, isAdmin: user?.is_admin ?? false, canRead, canWrite, loading }}>
+    <Ctx.Provider
+      value={{ user, isAdmin: user?.is_admin ?? false, canRead, canWrite, loading, logout }}
+    >
       {children}
     </Ctx.Provider>
   )

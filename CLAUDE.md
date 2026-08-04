@@ -136,48 +136,125 @@ Cascada de porcentaje en tres niveles:
   en una sesión aparte. Documentado también en comentarios en ambos servicios
   (`_doc_light` y `_evaluate_doc`).
 
-## Autenticación — Microsoft Entra ID
+## Autenticación — Local (email + contraseña, JWT propio)
+
+> ✅ **Migración completa (backend + frontend):** ya no hay nada de Microsoft/Entra
+> ni Auth.js/next-auth. Backend con JWT propio (HS256); frontend con login local
+> contra `/auth/login` y sesión en cookie httpOnly (ver "Frontend — sesión local"
+> abajo). El sistema de permisos por módulo (`app/core/permissions.py`,
+> `ModulePermission`) se conserva **intacto**.
 
 ### Archivos clave
 | Archivo | Función |
 |---------|---------|
-| `app/core/auth.py` | Dependencia `get_current_user` — valida JWT, auto-provisiona usuario |
-| `app/core/permissions.py` | Enums `Module`/`PermissionLevel`, deps `require_admin`/`require_module` |
-| `app/models/user.py` | Modelos `User` y `ModulePermission` (SQLAlchemy 2.0) |
-| `app/schemas/auth.py` | Schemas Pydantic para respuestas de auth |
-| `app/api/v1/endpoints/auth.py` | Endpoints `/auth/me`, `/admin/users`, `/admin/users/{id}`, `/admin/users/{id}/permissions` |
+| `app/core/security.py` | `hash_password`/`verify_password` (bcrypt vía passlib) + `validate_password_strength` (422) |
+| `app/core/auth.py` | `create_access_token(user)` + dependencia `get_current_user` (JWT HS256 propio) |
+| `app/core/permissions.py` | Enums `Module`/`PermissionLevel`, deps `require_admin`/`require_module` (sin cambios) |
+| `app/models/user.py` | `User` (con `hashed_password`, `must_change_password`) y `ModulePermission` |
+| `app/schemas/auth.py` | Schemas: `LoginRequest`, `LoginResponse`, `ChangePasswordRequest`, `UserCreate`, `UserPatch`, `PasswordReset`, `UserRead` |
+| `app/api/v1/endpoints/auth.py` | `/auth/login`, `/auth/change-password`, `/auth/me`, `/admin/users*` |
+
+### Modelo `User`
+- `email` (unique, index) — identificador de login. Se guarda/compara en minúsculas.
+- `hashed_password` (bcrypt, NOT NULL).
+- `must_change_password` (bool, default `True`) — obliga cambio en el primer ingreso.
+- `full_name`, `is_admin`, `is_active`, `last_login_at` — se conservan.
+- **Ya NO existe `entra_oid`** (eliminado en la migración `a3b4c5d6e7f8`).
 
 ### Módulos disponibles
 `trabajadores` · `vehiculos` · `gastos` · `configuracion` · `reportes`
 
 ### Flujo de autenticación
-1. Cliente envía `Authorization: Bearer <token>` (JWT de Entra ID)
-2. `get_current_user` valida firma contra JWKS de Microsoft y verifica `aud`/`iss`/`exp`
-3. Si el OID no existe en DB → auto-provisiona usuario; si el email está en `ADMIN_EMAILS` → `is_admin=True`
-4. Actualiza `last_login_at` en cada request válido
-5. Si `is_active=False` → 403
+1. `POST /auth/login` con `{email, password}` → verifica con `verify_password`.
+   - Credenciales inválidas → **401** genérico `"Correo o contraseña incorrectos."`
+     (no revela si falló el correo o la contraseña).
+   - Usuario inactivo → **403**.
+   - OK → actualiza `last_login_at`, firma un JWT y responde
+     `{access_token, token_type, must_change_password, user}`.
+2. Cliente envía `Authorization: Bearer <token>` en cada request.
+3. `get_current_user` valida firma (HS256 con `JWT_SECRET_KEY`) y expiración, lee
+   `sub`=id, carga el `User` por id y verifica `is_active`.
+   - Token inválido/expirado/manipulado o usuario borrado → **401** `"Token inválido o expirado."`
+   - Usuario inactivo → **403**.
+4. `POST /auth/change-password` con `{current_password, new_password}`: verifica la
+   actual, valida fuerza de la nueva, actualiza el hash y pone
+   `must_change_password=False`. **Funciona incluso con `must_change_password=True`**
+   (es la única acción permitida en ese estado).
+
+### Política de contraseñas (`validate_password_strength`)
+Largo entre **10 y 72** caracteres (72 = límite efectivo de bcrypt), al menos una
+letra y al menos un número. Si no cumple → **422** con mensaje claro. Se aplica al
+**crear** usuario, al **resetear** contraseña (admin) y al **cambiar** contraseña
+(usuario).
+
+### Administración de usuarios (admin) — todo bajo `require_admin`
+El **admin crea las cuentas y define su contraseña inicial** (no hay auto-registro).
+Endpoints en `app/api/v1/endpoints/auth.py`:
+
+| Método | Ruta | Efecto |
+|--------|------|--------|
+| `POST` | `/admin/users` | Crea usuario `{email, full_name?, password, is_admin, permissions?}`. Email único (**409** si existe, case-insensitive), fuerza de contraseña (**422**), permisos validados contra los enums (**422**). Se crea con `must_change_password=True` y **201**. |
+| `GET` | `/admin/users` | Lista usuarios con sus permisos (nunca expone `hashed_password`). |
+| `PATCH` | `/admin/users/{id}` | Edita `full_name`, `is_admin`, `is_active` (`None` = no tocar). |
+| `POST` | `/admin/users/{id}/reset-password` | El admin fija nueva contraseña `{new_password}`; valida fuerza y pone `must_change_password=True`. |
+| `DELETE` | `/admin/users/{id}` | Elimina el usuario (**204**). Cascade borra sus `ModulePermission`. |
+| `PUT` | `/admin/users/{id}/permissions` | Reemplaza el set de permisos (valida módulos/niveles). |
+
+**Salvaguardas de administrador:**
+- **Sí mismo:** un admin no puede quitarse `is_admin` ni desactivarse (**403** en PATCH),
+  ni eliminarse a sí mismo (**403** en DELETE).
+- **Último admin activo:** PATCH que dejaría sin ningún admin activo → **409**; DELETE del
+  último admin activo → **409**. Helper `_count_active_admins(db, exclude_id=...)`. Esta
+  red de seguridad cubre incluso el modo `AUTH_DISABLED` (el `current_user` es un stub
+  id=-1 fuera de la BD, así que la protección de "sí mismo" no aplicaría).
+
+**Sin exposición del hash:** `UserRead` lista campos explícitamente y **nunca** incluye
+`hashed_password` (ni `entra_oid`). Es el único schema de salida de usuarios.
+
+**FKs hacia `users`:** la única es `module_permissions.user_id` (`ondelete="CASCADE"`).
+No existe `created_by`/`updated_by` en el esquema, por lo que borrar un usuario no deja
+registros huérfanos ni requiere reasignación.
+
+### Bootstrap del primer admin — `scripts/create_admin.py`
+En una base vacía (o tras eliminar las cuentas heredadas de Entra, que quedaron con
+`hashed_password='LOCKED_NO_PASSWORD'` y no pueden entrar) no habría forma de iniciar
+sesión. El comando de bootstrap crea el primer administrador **sin depender de
+`AUTH_DISABLED`**:
+
+```powershell
+.venv\Scripts\python.exe -m scripts.create_admin
+# o no interactivo (automatización/CI):
+#   set ADMIN_EMAIL=... / ADMIN_FULL_NAME=... / ADMIN_PASSWORD=...
+.venv\Scripts\python.exe -m scripts.create_admin --yes
+```
+
+- Datos por **arg CLI > env (`ADMIN_EMAIL`/`ADMIN_FULL_NAME`/`ADMIN_PASSWORD`) > prompt**.
+- La contraseña se pide con `getpass` (sin eco) y **nunca se imprime**; valida fuerza.
+- Crea `is_admin=True`, `is_active=True`. **`must_change_password=False`** a propósito:
+  el operador definió la contraseña él mismo en consola (a diferencia de los usuarios
+  creados vía `/admin/users`, que llevan `True`).
+- **Idempotente:** si el email ya existe, lo promueve a admin y le resetea la
+  contraseña (en no interactivo requiere `--yes`; núcleo `upsert_admin`).
+- **`GET /auth/setup-status`** (público, sin auth): responde `{"has_admin": bool}` —
+  `true` sólo si existe al menos un admin **activo**. Sirve para que el frontend muestre
+  "no hay administradores, contacta al operador" en una base vacía. No expone datos
+  sensibles (helper `app/services/users.py::active_admin_exists`).
+
+Ver el procedimiento completo de primer arranque en **`DEPLOYMENT.md`**.
 
 ### Variables de entorno requeridas
 ```
-ENTRA_TENANT_ID=    # GUID del tenant de Azure
-ENTRA_CLIENT_ID=    # GUID del app registration
-ADMIN_EMAILS=       # comma-separated; reciben is_admin=True al primer login
-AUTH_DISABLED=false # ⚠️ NUNCA true en producción (ver candado ENVIRONMENT)
-ENVIRONMENT=development  # development | production
+JWT_SECRET_KEY=            # clave secreta para firmar el JWT (HS256)
+ACCESS_TOKEN_EXPIRE_MINUTES=480  # vida del token (default 480 = 8 h)
+AUTH_DISABLED=false        # ⚠️ NUNCA true en producción (candado ENVIRONMENT); en dev
+                           #    entrega un admin ficticio (id=-1)
+ENVIRONMENT=development     # development | production
 ```
 
-Con `ENVIRONMENT=production` la app **se niega a arrancar** si `AUTH_DISABLED=true`
-(candado en `app/core/config.py`, validado al construir `Settings`). Ver la sección
-"Tolerancia a fallas e higiene de errores".
-
-### Configuración del App Registration en Azure
-La App Registration debe tener el scope `access_as_user` expuesto para que el frontend pueda solicitar tokens con audiencia `api://<CLIENT_ID>`:
-1. **Azure Portal → App Registrations → tu app → Expose an API**
-2. Establece el Application ID URI como `api://<CLIENT_ID>`
-3. Agrega un scope llamado `access_as_user` (quién puede consentir: Admins and users)
-4. **API permissions → Add permission → My APIs → selecciona tu app → `access_as_user`** y concede Admin consent
-
-**¿Por qué?** El frontend solicita el scope `api://<CLIENT_ID>/access_as_user` para que el `access_token` tenga `aud=api://<CLIENT_ID>`. El backend acepta como audiencia válida tanto `<CLIENT_ID>` como `api://<CLIENT_ID>` (ambos formatos que puede emitir Entra ID).
+Con `ENVIRONMENT=production` la app **se niega a arrancar** si (a) `AUTH_DISABLED=true`
+o (b) `JWT_SECRET_KEY` está vacío o sigue siendo el placeholder de ejemplo
+(`INSECURE_JWT_DEFAULT`). Candado en `app/core/config.py`, validado al construir
+`Settings`. Ver "Tolerancia a fallas e higiene de errores".
 
 ### Uso en endpoints futuros
 ```python
@@ -190,6 +267,30 @@ _: User = Depends(require_admin)
 # Módulo específico (write implica read):
 _: User = Depends(require_module(Module.trabajadores, PermissionLevel.write))
 ```
+
+### Frontend — sesión local (sin Auth.js/Microsoft)
+El frontend ya **no** usa next-auth ni Microsoft Entra. Flujo:
+
+- **Login (`app/login/page.tsx`):** formulario email+contraseña → `POST /auth/login`.
+  Si `must_change_password=true` redirige a `/cambiar-contrasena`; si no, al dashboard.
+- **Sesión — cookie httpOnly:** el JWT se guarda en una cookie **httpOnly** `acr_session`
+  (no `localStorage`) vía el route handler **`app/api/session/route.ts`** (`POST` setea,
+  `GET` lee, `DELETE` limpia). Es la única copia persistente; el cliente rehidrata una
+  copia **en memoria** (`lib/token-store.ts`) en cada carga (`lib/session.ts::loadSessionToken`)
+  para adjuntarla como `Authorization: Bearer` a las llamadas directas al backend
+  (`lib/api.ts`). *Tradeoff:* un BFF que nunca exponga el token al navegador sería más
+  seguro pero exigiría proxyear toda la API por Next; se optó por httpOnly + memoria.
+- **Gate de rutas (`proxy.ts`, ex-middleware Next 16):** si falta la cookie `acr_session`
+  → redirige a `/login`. El matcher excluye `/login`, `/api/*` y assets.
+- **Guard de primer ingreso:** `PermissionsProvider` (`lib/permissions.tsx`) fuerza a
+  `/cambiar-contrasena` mientras `must_change_password=true`.
+- **Permisos:** `PermissionsProvider` alimenta `canRead`/`canWrite` desde `GET /auth/me`
+  con el token local (antes venía de la sesión next-auth); el filtrado del menú en
+  `AppShell` no cambió de comportamiento.
+- **Logout:** `logout()` del contexto → `DELETE /api/session` + limpia memoria → `/login`.
+  En `lib/api.ts`, un **401** del backend limpia la sesión y redirige a `/login`.
+- **Env:** `frontend/.env.example` solo requiere `NEXT_PUBLIC_API_URL` (se eliminaron
+  `AUTH_SECRET` y `AUTH_MICROSOFT_ENTRA_ID_*`).
 
 ## Política de archivos permitidos (defensa XSS almacenado)
 

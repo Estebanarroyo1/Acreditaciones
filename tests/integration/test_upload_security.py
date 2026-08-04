@@ -30,7 +30,7 @@ HTML_BYTES = b"<html><body><script>alert(document.cookie)</script></body></html>
 
 
 class _FakeAdmin:
-    """Usuario simulado — omite la validación JWT de Entra ID en tests."""
+    """Usuario simulado — omite la validación del JWT local en tests."""
     id = 1
     is_admin = True
     is_active = True

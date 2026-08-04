@@ -26,6 +26,10 @@ EXTENSION_TO_MIME = {
 # Conjunto de MIME que consideramos seguros para servir inline.
 ALLOWED_MIME_TYPES = set(EXTENSION_TO_MIME.values())
 
+# Valor de ejemplo de JWT_SECRET_KEY: inseguro a propósito. El candado de
+# producción rechaza arrancar si la clave sigue siendo este placeholder.
+INSECURE_JWT_DEFAULT = "dev-insecure-secret-change-me-not-for-production"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
@@ -79,10 +83,12 @@ class Settings(BaseSettings):
     # Rate limit para los endpoints /ai-scan: máximo de llamadas por usuario/minuto.
     AI_SCAN_MAX_PER_MINUTE: int = 10
 
-    # Microsoft Entra ID (M365) authentication
-    ENTRA_TENANT_ID: str = ""
-    ENTRA_CLIENT_ID: str = ""
-    ADMIN_EMAILS: str = ""  # comma-separated list of emails that get is_admin=True on first login
+    # Autenticación local (email + contraseña, JWT firmado por nosotros con HS256)
+    # Valor de ejemplo inseguro para que dev arranque sin configuración. En
+    # producción la app se NIEGA a arrancar si sigue siendo este default o está vacío.
+    JWT_SECRET_KEY: str = INSECURE_JWT_DEFAULT
+    # Vida del access token; 480 min = 8 h (una jornada laboral).
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
     # ⚠️ NEVER set AUTH_DISABLED=True in production — it bypasses all authentication
     AUTH_DISABLED: bool = False
 
@@ -99,6 +105,15 @@ class Settings(BaseSettings):
                     "ENVIRONMENT=production con AUTH_DISABLED=true está prohibido: "
                     "esto desactivaría toda la autenticación. Configura "
                     "AUTH_DISABLED=false para arrancar en producción."
+                )
+            # Candado duro: en producción exigimos un JWT_SECRET_KEY real (no vacío
+            # ni el placeholder de ejemplo); de lo contrario los tokens serían
+            # falsificables por cualquiera que conozca el default.
+            if not self.JWT_SECRET_KEY or self.JWT_SECRET_KEY == INSECURE_JWT_DEFAULT:
+                raise ValueError(
+                    "ENVIRONMENT=production requiere un JWT_SECRET_KEY propio y "
+                    "secreto. Configura una clave aleatoria larga (p. ej. "
+                    '`python -c "import secrets; print(secrets.token_urlsafe(48))"`).'
                 )
             # Aviso (no bloqueo): CORS con localhost en producción suele ser un error.
             localhost_origins = [o for o in self.CORS_ORIGINS if "localhost" in o]

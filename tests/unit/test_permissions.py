@@ -7,7 +7,7 @@ from app.models.user import ModulePermission, User
 
 
 def _user(*, is_admin: bool = False, permissions: list[ModulePermission] | None = None) -> User:
-    u = User(id=1, entra_oid="test-oid", email="test@test.com", is_admin=is_admin, is_active=True)
+    u = User(id=1, email="test@test.com", hashed_password="x", is_admin=is_admin, is_active=True)
     u.permissions = permissions or []
     return u
 

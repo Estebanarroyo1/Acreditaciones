@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import type { Project, WorkerGlobalStatus, WorkLocation } from '@/lib/types'
 import { api } from '@/lib/api'
@@ -28,10 +28,10 @@ function StatusCell({ w }: { w: WorkerGlobalStatus }) {
   return (
     <div className="inline-flex items-center gap-3">
       {parts.map((p, i) => (
-        <>
-          {i > 0 && <div key={`div-${i}`} className="w-px h-5 bg-slate-200 shrink-0" />}
-          <SemaforoCell key={p.label} light={p.light} label={p.label} />
-        </>
+        <Fragment key={p.label}>
+          {i > 0 && <div className="w-px h-5 bg-slate-200 shrink-0" />}
+          <SemaforoCell light={p.light} label={p.label} />
+        </Fragment>
       ))}
     </div>
   )

@@ -2,6 +2,7 @@ import type {
   AccreditationStatus,
   AdminPermissionItem,
   AdminUser,
+  AdminUserCreate,
   AdminUserPatch,
   AlertSettings,
   BulkUploadResult,
@@ -27,6 +28,7 @@ import type {
   WorkerFullProfile,
   WorkerGlobalStatus,
 } from './types'
+import { clearSession } from './session'
 import { tokenStore } from './token-store'
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000/api/v1'
@@ -38,6 +40,10 @@ function authHeaders(extra?: Record<string, string>): Record<string, string> {
 
 function handle401(res: Response) {
   if (res.status === 401 && typeof window !== 'undefined') {
+    // Token inválido/expirado: limpiamos la sesión (cookie httpOnly + memoria) y
+    // volvemos al login. clearSession es best-effort; no bloquea el redirect.
+    tokenStore.set(null)
+    void clearSession()
     window.location.href = '/login'
   }
 }
@@ -488,8 +494,12 @@ export const api = {
 
   // Admin — user management
   getAdminUsers: () => get<AdminUser[]>('/admin/users'),
+  createAdminUser: (body: AdminUserCreate) => post<AdminUser>('/admin/users', body),
   patchAdminUser: (id: number, body: AdminUserPatch) =>
     patch<AdminUser>(`/admin/users/${id}`, body),
+  resetAdminUserPassword: (id: number, newPassword: string) =>
+    post<AdminUser>(`/admin/users/${id}/reset-password`, { new_password: newPassword }),
+  deleteAdminUser: (id: number) => del(`/admin/users/${id}`),
   replaceUserPermissions: (id: number, permissions: AdminPermissionItem[]) =>
     put<AdminUser>(`/admin/users/${id}/permissions`, { permissions }),
 }

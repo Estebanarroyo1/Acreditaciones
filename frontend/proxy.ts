@@ -1,15 +1,12 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
-// Gate de sesión optimista (convenio Proxy de Next 16, ex-middleware).
-// Solo comprueba la PRESENCIA de la cookie de sesión de NextAuth; nunca la
-// valida aquí porque auth() no corre de forma fiable en el edge runtime.
-// La validación real la hacen el backend (get_current_user) y NextAuth en las
-// rutas server. Ver frontend/AGENTS.md (middleware → proxy).
+// Gate de sesión (convenio Proxy de Next 16, ex-middleware). Comprueba la
+// PRESENCIA de la cookie httpOnly de sesión local (`acr_session`, seteada por el
+// route handler /api/session). No valida el JWT aquí (eso lo hace el backend en
+// get_current_user); solo redirige a /login si no hay cookie. Ver frontend/AGENTS.md.
 export function proxy(req: NextRequest) {
-  const hasSession =
-    req.cookies.has('authjs.session-token') ||
-    req.cookies.has('__Secure-authjs.session-token')
+  const hasSession = req.cookies.has('acr_session')
 
   if (!hasSession) {
     return NextResponse.redirect(new URL('/login', req.url))
@@ -17,10 +14,10 @@ export function proxy(req: NextRequest) {
   return NextResponse.next()
 }
 
-// El matcher ya excluye /login y api/auth (rutas públicas necesarias para
-// autenticarse) además de los assets estáticos.
+// El matcher excluye /login (necesario para autenticarse), todas las rutas /api
+// (incluida /api/session, que gestiona su propia sesión) y los assets estáticos.
+// /cambiar-contrasena NO se excluye: requiere sesión (el guard del cliente fuerza
+// ahí a quien tenga must_change_password=true).
 export const config = {
-  matcher: [
-    '/((?!api/auth|login|_next/static|_next/image|favicon\\.ico|public).*)',
-  ],
+  matcher: ['/((?!api|login|_next/static|_next/image|favicon\\.ico|public).*)'],
 }

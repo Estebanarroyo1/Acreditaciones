@@ -444,6 +444,7 @@ export interface AdminUser {
 }
 
 export interface AdminUserPatch {
+  full_name?: string
   is_active?: boolean
   is_admin?: boolean
 }
@@ -451,4 +452,12 @@ export interface AdminUserPatch {
 export interface AdminPermissionItem {
   module: string
   level: string
+}
+
+export interface AdminUserCreate {
+  email: string
+  full_name?: string | null
+  password: string
+  is_admin: boolean
+  permissions?: AdminPermissionItem[]
 }

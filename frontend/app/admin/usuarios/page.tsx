@@ -1,11 +1,11 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { usePermissions } from '@/lib/permissions'
 import { api } from '@/lib/api'
-import type { AdminPermissionItem, AdminUser } from '@/lib/types'
+import type { AdminPermissionItem, AdminUser, AdminUserCreate } from '@/lib/types'
 
 // ── Constants ──────────────────────────────────────────────────────────────
 const MODULES = [
@@ -33,21 +33,79 @@ function initPerms(user: AdminUser): LocalPerms {
   return result
 }
 
+function emptyPerms(): LocalPerms {
+  const result = {} as LocalPerms
+  for (const m of MODULES) result[m.key] = 'none'
+  return result
+}
+
+function permItemsFromLocal(perms: LocalPerms): AdminPermissionItem[] {
+  return (Object.entries(perms) as [ModuleKey, PermLevel][])
+    .filter(([, level]) => level !== 'none')
+    .map(([module, level]) => ({ module, level }))
+}
+
 function formatDate(iso: string | null): string {
   if (!iso) return '—'
   return new Date(iso).toLocaleString('es-CL', { dateStyle: 'short', timeStyle: 'short' })
 }
 
-// ── Toggle ─────────────────────────────────────────────────────────────────
-function Toggle({ checked, disabled, onChange }: {
+// ── Password policy (espejo de validate_password_strength del backend) ──────
+interface PwChecks {
+  length: boolean
+  letter: boolean
+  number: boolean
+}
+function checkPassword(pw: string): PwChecks {
+  return {
+    length: pw.length >= 10 && pw.length <= 72,
+    letter: /[a-zA-Z]/.test(pw),
+    number: /[0-9]/.test(pw),
+  }
+}
+function pwValid(pw: string): boolean {
+  const c = checkPassword(pw)
+  return c.length && c.letter && c.number
+}
+function pwStrength(pw: string): number {
+  if (!pw) return 0
+  const c = checkPassword(pw)
+  let score = 0
+  if (c.length) score += 1
+  if (c.letter && c.number) score += 1
+  if (pw.length >= 14) score += 1
+  if (/[^a-zA-Z0-9]/.test(pw) || (/[a-z]/.test(pw) && /[A-Z]/.test(pw))) score += 1
+  return Math.min(score, 4)
+}
+const STRENGTH_META = [
+  { label: '', color: '' },
+  { label: 'Débil', color: 'bg-red-500' },
+  { label: 'Media', color: 'bg-amber-500' },
+  { label: 'Buena', color: 'bg-blue-500' },
+  { label: 'Fuerte', color: 'bg-green-500' },
+]
+
+function PwReq({ ok, text }: { ok: boolean; text: string }) {
+  return (
+    <li className={`flex items-center gap-1.5 ${ok ? 'text-green-700' : 'text-slate-500'}`}>
+      <span className="w-3 text-center">{ok ? '✓' : '•'}</span>
+      {text}
+    </li>
+  )
+}
+
+// ── UI primitives ────────────────────────────────────────────────────────────
+function Toggle({ checked, disabled, title, onChange }: {
   checked: boolean
   disabled?: boolean
+  title?: string
   onChange: (v: boolean) => void
 }) {
   return (
     <button
       type="button"
       disabled={disabled}
+      title={title}
       onClick={() => onChange(!checked)}
       className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
         disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'
@@ -62,7 +120,6 @@ function Toggle({ checked, disabled, onChange }: {
   )
 }
 
-// ── Perm radio ─────────────────────────────────────────────────────────────
 const PERM_LABELS: Record<PermLevel, string> = { none: 'Sin acceso', read: 'Lectura', write: 'Escritura' }
 
 function PermRadio({ value, current, disabled, onChange }: {
@@ -85,6 +142,88 @@ function PermRadio({ value, current, disabled, onChange }: {
   )
 }
 
+// Grilla de permisos por módulo (Sin acceso / Lectura / Escritura), compartida.
+function PermGrid({ perms, onChange }: {
+  perms: LocalPerms
+  onChange: (key: ModuleKey, level: PermLevel) => void
+}) {
+  return (
+    <div className="border border-slate-200 overflow-hidden rounded">
+      <table className="w-full">
+        <thead>
+          <tr className="bg-[#e6f0f9] border-b border-[#c5d8ed]">
+            <th className="px-3 py-1.5 text-left text-[10px] font-bold uppercase tracking-wider text-[#003f7a]">Módulo</th>
+            <th className="px-3 py-1.5 text-left text-[10px] font-bold uppercase tracking-wider text-[#003f7a]">Nivel de acceso</th>
+          </tr>
+        </thead>
+        <tbody>
+          {MODULES.map((m, i) => (
+            <tr key={m.key} className={`border-b border-slate-100 ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}`}>
+              <td className="px-3 py-2 text-[11px] font-medium text-slate-700 w-32">{m.label}</td>
+              <td className="px-3 py-2">
+                <div className="flex items-center gap-3">
+                  {(['none', 'read', 'write'] as PermLevel[]).map((level) => (
+                    <PermRadio
+                      key={level}
+                      value={level}
+                      current={perms[m.key]}
+                      onChange={(v) => onChange(m.key, v)}
+                    />
+                  ))}
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+// Campo de contraseña con requisitos visibles + barra de fuerza.
+function PasswordField({ id, label, value, autoComplete, onChange }: {
+  id: string
+  label: string
+  value: string
+  autoComplete?: string
+  onChange: (v: string) => void
+}) {
+  const checks = checkPassword(value)
+  const strength = pwStrength(value)
+  const meta = STRENGTH_META[strength]
+  return (
+    <div>
+      <label htmlFor={id} className="block text-[11px] font-medium text-slate-600 mb-1">
+        {label}
+      </label>
+      <input
+        id={id}
+        type="password"
+        autoComplete={autoComplete}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full h-8 px-2.5 border border-slate-300 text-[12px] text-slate-800 focus:outline-none focus:border-[#005096] rounded-sm"
+      />
+      {value && (
+        <div className="mt-1.5 flex items-center gap-2">
+          <div className="flex-1 h-1.5 bg-slate-200 rounded overflow-hidden">
+            <div
+              className={`h-full transition-all ${meta.color}`}
+              style={{ width: `${(strength / 4) * 100}%` }}
+            />
+          </div>
+          <span className="text-[10px] text-slate-500 w-10">{meta.label}</span>
+        </div>
+      )}
+      <ul className="mt-1.5 text-[10px] space-y-0.5">
+        <PwReq ok={checks.length} text="Entre 10 y 72 caracteres" />
+        <PwReq ok={checks.letter} text="Al menos una letra" />
+        <PwReq ok={checks.number} text="Al menos un número" />
+      </ul>
+    </div>
+  )
+}
+
 // ── Permission summary badge (for table) ───────────────────────────────────
 function PermSummary({ user }: { user: AdminUser }) {
   if (user.is_admin) {
@@ -100,14 +239,137 @@ function PermSummary({ user }: { user: AdminUser }) {
   )
 }
 
+// ── Create user modal ──────────────────────────────────────────────────────
+function CreateUserModal({ onClose, onCreated }: {
+  onClose: () => void
+  onCreated: (created: AdminUser) => void
+}) {
+  const [email, setEmail] = useState('')
+  const [fullName, setFullName] = useState('')
+  const [password, setPassword] = useState('')
+  const [isAdminFlag, setIsAdminFlag] = useState(false)
+  const [perms, setPerms] = useState<LocalPerms>(emptyPerms)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  const canSubmit = email.trim() !== '' && pwValid(password) && !saving
+
+  const handleCreate = async () => {
+    setSaving(true)
+    setError('')
+    try {
+      const body: AdminUserCreate = {
+        email: email.trim(),
+        full_name: fullName.trim() || null,
+        password,
+        is_admin: isAdminFlag,
+        permissions: isAdminFlag ? [] : permItemsFromLocal(perms),
+      }
+      const created = await api.createAdminUser(body)
+      onCreated(created)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Error al crear usuario')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center overflow-y-auto py-10 px-4">
+      <div className="w-full max-w-lg bg-white shadow-xl rounded-sm">
+        <div className="px-4 py-3 border-b border-slate-200 bg-[#f4f6f8] flex items-center justify-between">
+          <h3 className="text-sm font-bold text-slate-900">Crear usuario</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="px-4 py-4 space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label htmlFor="new-email" className="block text-[11px] font-medium text-slate-600 mb-1">Correo</label>
+              <input
+                id="new-email"
+                type="email"
+                autoComplete="off"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full h-8 px-2.5 border border-slate-300 text-[12px] text-slate-800 focus:outline-none focus:border-[#005096] rounded-sm"
+              />
+            </div>
+            <div>
+              <label htmlFor="new-name" className="block text-[11px] font-medium text-slate-600 mb-1">Nombre completo</label>
+              <input
+                id="new-name"
+                type="text"
+                autoComplete="off"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                className="w-full h-8 px-2.5 border border-slate-300 text-[12px] text-slate-800 focus:outline-none focus:border-[#005096] rounded-sm"
+              />
+            </div>
+          </div>
+
+          <PasswordField
+            id="new-password"
+            label="Contraseña inicial"
+            value={password}
+            autoComplete="new-password"
+            onChange={setPassword}
+          />
+          <p className="text-[10px] text-slate-500 -mt-1">
+            El usuario deberá cambiarla en su primer ingreso.
+          </p>
+
+          <div className="flex items-center gap-2.5 pt-1">
+            <Toggle checked={isAdminFlag} onChange={setIsAdminFlag} />
+            <span className="text-[11px] font-medium text-slate-700">Administrador (acceso total)</span>
+          </div>
+
+          {!isAdminFlag && (
+            <div>
+              <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-slate-400 mb-2">Permisos por módulo</p>
+              <PermGrid perms={perms} onChange={(k, v) => setPerms((p) => ({ ...p, [k]: v }))} />
+            </div>
+          )}
+
+          {error && (
+            <p className="text-[11px] text-red-600 bg-red-50 border border-red-200 px-3 py-2 rounded">{error}</p>
+          )}
+        </div>
+
+        <div className="px-4 py-3 border-t border-slate-200 bg-[#f4f6f8] flex items-center justify-end gap-2">
+          <button
+            onClick={onClose}
+            className="px-3 py-1.5 text-[11px] font-semibold text-slate-600 border border-slate-300 hover:bg-slate-100 rounded-sm"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={() => void handleCreate()}
+            disabled={!canSubmit}
+            className="px-3 py-1.5 text-[11px] font-semibold bg-[#003f7a] text-white hover:bg-[#005096] disabled:opacity-50 rounded-sm"
+          >
+            {saving ? 'Creando…' : 'Crear usuario'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Edit panel ─────────────────────────────────────────────────────────────
-function EditPanel({ user, selfId, onSaved, onClose }: {
+function EditPanel({ user, isSelf, isLastActiveAdmin, onSaved, onDeleted, onClose }: {
   user: AdminUser
-  selfId: number | undefined
+  isSelf: boolean
+  isLastActiveAdmin: boolean
   onSaved: (updated: AdminUser) => void
+  onDeleted: (id: number) => void
   onClose: () => void
 }) {
-  const isSelf = user.id === selfId
+  const [fullName, setFullName] = useState(user.full_name ?? '')
   const [isActive, setIsActive] = useState(user.is_active)
   const [isAdminFlag, setIsAdminFlag] = useState(user.is_admin)
   const [perms, setPerms] = useState<LocalPerms>(() => initPerms(user))
@@ -115,14 +377,36 @@ function EditPanel({ user, selfId, onSaved, onClose }: {
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
 
-  // Reset panel state when user changes (microtask avoids set-state-in-effect lint rule)
+  // Reset / password
+  const [showReset, setShowReset] = useState(false)
+  const [resetPw, setResetPw] = useState('')
+  const [resetting, setResetting] = useState(false)
+  const [resetMsg, setResetMsg] = useState('')
+
+  // Delete
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+
+  // Motivo por el que se bloquean las acciones peligrosas (toggles admin/activo, eliminar).
+  const dangerReason = isSelf
+    ? 'No puedes modificar el rol/estado ni eliminar tu propia cuenta.'
+    : isLastActiveAdmin
+      ? 'Es el único administrador activo del sistema. Asigna otro admin antes de modificarlo o eliminarlo.'
+      : null
+  const dangerDisabled = dangerReason !== null
+
   useEffect(() => {
     void Promise.resolve().then(() => {
+      setFullName(user.full_name ?? '')
       setIsActive(user.is_active)
       setIsAdminFlag(user.is_admin)
       setPerms(initPerms(user))
       setSaved(false)
       setError('')
+      setShowReset(false)
+      setResetPw('')
+      setResetMsg('')
+      setConfirmDelete(false)
     })
   }, [user])
 
@@ -132,14 +416,11 @@ function EditPanel({ user, selfId, onSaved, onClose }: {
     setSaved(false)
     try {
       const patched = await api.patchAdminUser(user.id, {
+        full_name: fullName.trim(),
         is_active: isActive,
         is_admin: isAdminFlag,
       })
-
-      const permItems: AdminPermissionItem[] = (Object.entries(perms) as [ModuleKey, PermLevel][])
-        .filter(([, level]) => level !== 'none')
-        .map(([module, level]) => ({ module, level }))
-
+      const permItems = isAdminFlag ? [] : permItemsFromLocal(perms)
       const final = await api.replaceUserPermissions(patched.id, permItems)
       setSaved(true)
       onSaved(final)
@@ -151,18 +432,42 @@ function EditPanel({ user, selfId, onSaved, onClose }: {
     }
   }
 
+  const handleReset = async () => {
+    setResetting(true)
+    setResetMsg('')
+    setError('')
+    try {
+      await api.resetAdminUserPassword(user.id, resetPw)
+      setResetMsg('Contraseña restablecida. El usuario deberá cambiarla al ingresar.')
+      setResetPw('')
+      setShowReset(false)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Error al restablecer la contraseña')
+    } finally {
+      setResetting(false)
+    }
+  }
+
+  const handleDelete = async () => {
+    setDeleting(true)
+    setError('')
+    try {
+      await api.deleteAdminUser(user.id)
+      onDeleted(user.id)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Error al eliminar el usuario')
+      setDeleting(false)
+    }
+  }
+
   return (
     <div className="w-[400px] shrink-0 bg-white border-l border-slate-200 flex flex-col overflow-hidden">
-      {/* Panel header */}
       <div className="px-4 py-3 border-b border-slate-200 bg-[#f4f6f8] flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-sm font-bold text-slate-900 truncate">{user.full_name ?? user.email}</p>
           <p className="text-[11px] text-slate-500 truncate">{user.email}</p>
         </div>
-        <button
-          onClick={onClose}
-          className="mt-0.5 text-slate-400 hover:text-slate-700 transition-colors shrink-0"
-        >
+        <button onClick={onClose} className="mt-0.5 text-slate-400 hover:text-slate-700 transition-colors shrink-0">
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
           </svg>
@@ -170,66 +475,122 @@ function EditPanel({ user, selfId, onSaved, onClose }: {
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        {/* Toggles section */}
+        {/* Datos */}
+        <div className="px-4 py-4 border-b border-slate-100">
+          <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-slate-400 mb-2">Datos</p>
+          <label htmlFor="edit-name" className="block text-[11px] font-medium text-slate-600 mb-1">Nombre completo</label>
+          <input
+            id="edit-name"
+            type="text"
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+            className="w-full h-8 px-2.5 border border-slate-300 text-[12px] text-slate-800 focus:outline-none focus:border-[#005096] rounded-sm"
+          />
+        </div>
+
+        {/* Estado de cuenta */}
         <div className="px-4 py-4 border-b border-slate-100">
           <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-slate-400 mb-3">Estado de cuenta</p>
           <div className="flex items-center gap-6">
             <div className="flex items-center gap-2.5">
-              <Toggle checked={isActive} disabled={isSelf} onChange={setIsActive} />
+              <Toggle checked={isActive} disabled={dangerDisabled} title={dangerReason ?? undefined} onChange={setIsActive} />
               <span className="text-[11px] font-medium text-slate-700">Activo</span>
             </div>
             <div className="flex items-center gap-2.5">
-              <Toggle
-                checked={isAdminFlag}
-                disabled={isSelf}
-                onChange={setIsAdminFlag}
-              />
+              <Toggle checked={isAdminFlag} disabled={dangerDisabled} title={dangerReason ?? undefined} onChange={setIsAdminFlag} />
               <span className="text-[11px] font-medium text-slate-700">Administrador</span>
             </div>
           </div>
-          {isSelf && (
+          {dangerReason && (
             <p className="mt-2.5 text-[10px] text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-1.5 rounded">
-              No puedes modificar tu propia cuenta de administrador.
+              {dangerReason}
             </p>
           )}
         </div>
 
-        {/* Permissions section */}
-        <div className="px-4 py-4">
+        {/* Permisos */}
+        <div className="px-4 py-4 border-b border-slate-100">
           <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-slate-400 mb-3">Permisos por módulo</p>
           {isAdminFlag ? (
             <p className="text-[11px] text-slate-500 bg-blue-50 border border-blue-100 px-3 py-2.5 rounded">
               Los administradores tienen acceso total a todos los módulos del sistema.
             </p>
           ) : (
-            <div className="border border-slate-200 overflow-hidden rounded">
-              <table className="w-full">
-                <thead>
-                  <tr className="bg-[#e6f0f9] border-b border-[#c5d8ed]">
-                    <th className="px-3 py-1.5 text-left text-[10px] font-bold uppercase tracking-wider text-[#003f7a]">Módulo</th>
-                    <th className="px-3 py-1.5 text-left text-[10px] font-bold uppercase tracking-wider text-[#003f7a]">Nivel de acceso</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {MODULES.map((m, i) => (
-                    <tr key={m.key} className={`border-b border-slate-100 ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}`}>
-                      <td className="px-3 py-2 text-[11px] font-medium text-slate-700 w-32">{m.label}</td>
-                      <td className="px-3 py-2">
-                        <div className="flex items-center gap-3">
-                          {(['none', 'read', 'write'] as PermLevel[]).map((level) => (
-                            <PermRadio
-                              key={level}
-                              value={level}
-                              current={perms[m.key]}
-                              onChange={(v) => setPerms((p) => ({ ...p, [m.key]: v }))}
-                            />
-                          ))}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <PermGrid perms={perms} onChange={(k, v) => setPerms((p) => ({ ...p, [k]: v }))} />
+          )}
+        </div>
+
+        {/* Seguridad: reset password */}
+        <div className="px-4 py-4 border-b border-slate-100">
+          <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-slate-400 mb-2">Seguridad</p>
+          {!showReset ? (
+            <button
+              onClick={() => { setShowReset(true); setResetMsg('') }}
+              className="text-[11px] font-semibold text-[#003f7a] hover:underline"
+            >
+              Restablecer contraseña…
+            </button>
+          ) : (
+            <div className="space-y-2.5">
+              <PasswordField
+                id="reset-password"
+                label="Nueva contraseña"
+                value={resetPw}
+                autoComplete="new-password"
+                onChange={setResetPw}
+              />
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => void handleReset()}
+                  disabled={!pwValid(resetPw) || resetting}
+                  className="px-3 py-1.5 text-[11px] font-semibold bg-[#003f7a] text-white hover:bg-[#005096] disabled:opacity-50 rounded-sm"
+                >
+                  {resetting ? 'Restableciendo…' : 'Restablecer'}
+                </button>
+                <button
+                  onClick={() => { setShowReset(false); setResetPw('') }}
+                  className="px-3 py-1.5 text-[11px] font-semibold text-slate-600 border border-slate-300 hover:bg-slate-100 rounded-sm"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          )}
+          {resetMsg && <p className="mt-2 text-[11px] text-green-700">✓ {resetMsg}</p>}
+        </div>
+
+        {/* Zona peligrosa: eliminar */}
+        <div className="px-4 py-4">
+          <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-red-400 mb-2">Zona peligrosa</p>
+          {!confirmDelete ? (
+            <button
+              onClick={() => setConfirmDelete(true)}
+              disabled={dangerDisabled}
+              title={dangerReason ?? undefined}
+              className="text-[11px] font-semibold text-red-600 border border-red-200 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed px-3 py-1.5 rounded-sm"
+            >
+              Eliminar usuario
+            </button>
+          ) : (
+            <div className="bg-red-50 border border-red-200 rounded p-3">
+              <p className="text-[11px] text-red-700 mb-2">
+                ¿Eliminar a <strong>{user.full_name ?? user.email}</strong>? Esta acción no se puede deshacer.
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => void handleDelete()}
+                  disabled={deleting}
+                  className="px-3 py-1.5 text-[11px] font-semibold bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 rounded-sm"
+                >
+                  {deleting ? 'Eliminando…' : 'Sí, eliminar'}
+                </button>
+                <button
+                  onClick={() => setConfirmDelete(false)}
+                  className="px-3 py-1.5 text-[11px] font-semibold text-slate-600 border border-slate-300 hover:bg-slate-100 rounded-sm"
+                >
+                  Cancelar
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -238,7 +599,7 @@ function EditPanel({ user, selfId, onSaved, onClose }: {
       {/* Footer */}
       <div className="px-4 py-3 border-t border-slate-200 bg-[#f4f6f8] flex items-center justify-between gap-3">
         <div className="flex-1 min-w-0">
-          {error && <p className="text-[11px] text-red-600 truncate">{error}</p>}
+          {error && <p className="text-[11px] text-red-600 truncate" title={error}>{error}</p>}
           {saved && !error && <p className="text-[11px] text-green-700 font-medium">✓ Cambios guardados</p>}
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -269,8 +630,9 @@ export default function AdminUsuariosPage() {
   const [loadingUsers, setLoadingUsers] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [selected, setSelected] = useState<AdminUser | null>(null)
+  const [creating, setCreating] = useState(false)
 
-  // Guard: redirect non-admins
+  // Guard: redirige a quien no sea admin (defensa en cliente; el backend ya exige require_admin).
   useEffect(() => {
     if (!permLoading && !isAdmin) {
       router.replace('/')
@@ -294,12 +656,27 @@ export default function AdminUsuariosPage() {
     if (isAdmin) void Promise.resolve().then(() => void loadUsers())
   }, [isAdmin, loadUsers])
 
+  const activeAdminCount = useMemo(
+    () => users.filter((u) => u.is_admin && u.is_active).length,
+    [users],
+  )
+
   const handleUserSaved = (updated: AdminUser) => {
     setUsers((prev) => prev.map((u) => (u.id === updated.id ? updated : u)))
     setSelected(updated)
   }
 
-  // Show spinner while checking permissions or redirecting
+  const handleUserDeleted = (id: number) => {
+    setUsers((prev) => prev.filter((u) => u.id !== id))
+    setSelected(null)
+  }
+
+  const handleUserCreated = (created: AdminUser) => {
+    setCreating(false)
+    setUsers((prev) => [...prev, created])
+    setSelected(created)
+  }
+
   if (permLoading || !isAdmin) {
     return (
       <div className="h-screen bg-[#f4f6f8] flex items-center justify-center">
@@ -341,16 +718,27 @@ export default function AdminUsuariosPage() {
                 {users.length} usuario{users.length !== 1 ? 's' : ''} registrado{users.length !== 1 ? 's' : ''}
               </p>
             </div>
-            <button
-              onClick={() => void loadUsers()}
-              disabled={loadingUsers}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold text-slate-600 border border-slate-300 bg-white hover:bg-slate-50 rounded-sm transition-colors disabled:opacity-50"
-            >
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
-              </svg>
-              Actualizar
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => void loadUsers()}
+                disabled={loadingUsers}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold text-slate-600 border border-slate-300 bg-white hover:bg-slate-50 rounded-sm transition-colors disabled:opacity-50"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+                </svg>
+                Actualizar
+              </button>
+              <button
+                onClick={() => setCreating(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold text-white bg-[#003f7a] hover:bg-[#005096] rounded-sm transition-colors"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2.2} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                </svg>
+                Crear usuario
+              </button>
+            </div>
           </div>
 
           {loadError && (
@@ -440,13 +828,19 @@ export default function AdminUsuariosPage() {
         {selected && (
           <EditPanel
             user={selected}
-            selfId={selfUser?.id}
+            isSelf={selected.id === selfUser?.id}
+            isLastActiveAdmin={selected.is_admin && selected.is_active && activeAdminCount === 1}
             onSaved={handleUserSaved}
+            onDeleted={handleUserDeleted}
             onClose={() => setSelected(null)}
           />
         )}
 
       </div>
+
+      {creating && (
+        <CreateUserModal onClose={() => setCreating(false)} onCreated={handleUserCreated} />
+      )}
     </div>
   )
 }
