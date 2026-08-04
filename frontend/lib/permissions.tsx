@@ -64,7 +64,21 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
           headers: { Authorization: `Bearer ${token}` },
         })
         if (!res.ok) {
+          // Un 401/403 aquí suele ser una sesión inválida/expirada (p. ej. token
+          // viejo tras rotar JWT_SECRET_KEY) o un usuario desactivado. Lo
+          // registramos para que sea visible en consola en vez de fallar en silencio.
+          console.error(
+            `[auth] GET /auth/me respondió ${res.status}: sesión no válida.`,
+          )
           tokenStore.set(null)
+          if (res.status === 401 || res.status === 403) {
+            // Auto-recuperación: limpiamos la cookie stale y volvemos al login, para
+            // que el usuario no quede atrapado con el menú vacío. Consistente con el
+            // manejo de 401 en lib/api.ts.
+            await clearSession()
+            if (active) router.replace('/login')
+            return
+          }
           if (active) {
             setUser(null)
             setLoading(false)
@@ -76,7 +90,8 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
           setUser(data)
           setLoading(false)
         }
-      } catch {
+      } catch (err) {
+        console.error('[auth] No se pudo contactar /auth/me:', err)
         if (active) {
           setUser(null)
           setLoading(false)
@@ -86,7 +101,8 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
     return () => {
       active = false
     }
-  }, [])
+    // router es estable (useRouter); el efecto sigue corriendo una sola vez al montar.
+  }, [router])
 
   // Guard de primer ingreso: si must_change_password es true, el usuario no puede
   // navegar a ninguna otra ruta — se le fuerza a /cambiar-contrasena.

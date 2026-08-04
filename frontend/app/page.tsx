@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { LauncherActions } from '@/components/LauncherActions'
 
 // ── Module card ────────────────────────────────────────────────────────────
 function ModuleCard({
@@ -101,9 +102,12 @@ export default function AppLauncher() {
             <p className="text-zinc-500 text-[10px]">Sistema corporativo</p>
           </div>
         </div>
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-green-950/50 border border-green-900/40">
-          <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-          <span className="text-[10px] text-green-400 font-medium">Todos los servicios activos</span>
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-green-950/50 border border-green-900/40">
+            <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+            <span className="text-[10px] text-green-400 font-medium">Todos los servicios activos</span>
+          </div>
+          <LauncherActions />
         </div>
       </header>
 

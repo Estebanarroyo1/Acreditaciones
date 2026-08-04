@@ -11,6 +11,7 @@ import jwt
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.db.session import get_db
@@ -74,7 +75,11 @@ async def get_current_user(
     except (TypeError, ValueError):
         raise HTTPException(status_code=401, detail="Token inválido o expirado.")
 
-    user = await db.get(User, user_id)
+    # Eager-load explícito de permissions: aunque el modelo ya usa lazy="selectin",
+    # lo hacemos explícito aquí para que /auth/me (response_model=UserRead) serialice
+    # SIEMPRE los permisos dentro de la sesión async, sin depender de la config del
+    # modelo ni arriesgar un lazy-load fuera de contexto (MissingGreenlet).
+    user = await db.get(User, user_id, options=[selectinload(User.permissions)])
     if user is None:
         # El usuario fue eliminado tras emitirse el token: se trata como no autenticado.
         raise HTTPException(status_code=401, detail="Token inválido o expirado.")
