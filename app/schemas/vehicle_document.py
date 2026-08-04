@@ -4,7 +4,6 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict
 
 from app.models.associations import DocumentStatus
-from app.schemas.ai_validation import ValidationWarning
 from app.schemas.vehicle_document_type import VehicleDocumentTypeRead
 
 
@@ -25,12 +24,8 @@ class VehicleDocumentRead(BaseModel):
     status: DocumentStatus
     reviewer_notes: Optional[str] = None
     custom_alert_days: Optional[int] = None
-    type_override_used: bool = False
-    validation_notes: Optional[str] = None
     created_at: datetime
     updated_at: datetime
-    # Avisos IA (solo en la respuesta de subida; vacío al leer de BD).
-    warnings: list[ValidationWarning] = []
 
 
 class VehicleDocumentReview(BaseModel):

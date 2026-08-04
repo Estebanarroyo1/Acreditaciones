@@ -3,7 +3,6 @@ from datetime import date, datetime
 from pydantic import BaseModel, ConfigDict
 
 from app.models.associations import DocumentStatus
-from app.schemas.ai_validation import ValidationWarning
 from app.schemas.document_type import DocumentTypeRead
 
 
@@ -37,10 +36,6 @@ class WorkerDocumentRead(WorkerDocumentBase):
     reviewer_notes: str | None = None
     custom_alert_percentage: int | None = None
     is_archived: bool = False
-    validation_override_used: bool = False
-    validation_notes: str | None = None
     created_at: datetime
     updated_at: datetime
     document_type: DocumentTypeRead
-    # Avisos IA (solo en la respuesta de subida; vacío al leer de BD).
-    warnings: list[ValidationWarning] = []

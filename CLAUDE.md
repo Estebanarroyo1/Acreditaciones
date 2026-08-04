@@ -20,7 +20,7 @@ C:\Acreditaciones\
 └── uploads/                # Archivos subidos (excluido del repo)
 ```
 
-**Stack:** Python 3.12 · FastAPI 0.115 · SQLAlchemy 2.0 async (asyncpg) · PostgreSQL 16 · Alembic 1.13 · APScheduler 3.10 · OpenAI API (gpt-4o, extracción de fechas de documentos via PyMuPDF) · Next.js 16 · TypeScript · Tailwind CSS v4
+**Stack:** Python 3.12 · FastAPI 0.115 · SQLAlchemy 2.0 async (asyncpg) · PostgreSQL 16 · Alembic 1.13 · APScheduler 3.10 · Next.js 16 · TypeScript · Tailwind CSS v4
 
 ## Convenciones de código
 
@@ -320,8 +320,8 @@ Definida en `app/core/config.py`:
 - `save_upload`/`save_vehicle_upload` persisten en **streaming** (chunks de 1 MB a
   un archivo temporal), abortando con **413** apenas el acumulado supere
   `MAX_UPLOAD_SIZE_MB`. Nunca se carga el archivo completo en RAM.
-- Los flujos que necesitan los bytes en memoria (IA) usan `read_upload_capped()`,
-  que acota la lectura al mismo límite antes de enviar nada a OpenAI.
+- (`read_upload_capped()` sigue en `storage.py` como utilidad para leer bytes en
+  memoria con tope, pero ya no hay flujos que la usen tras eliminar la IA.)
 
 ### Al servir archivos (view/download, ambos dominios)
 - `media_type` **siempre** desde `resolve_media_type()` (mapa validado), jamás el
@@ -335,113 +335,41 @@ Definida en `app/core/config.py`:
 sospechosos **sin borrar nada** (los archivos ya subidos son de confianza; no se
 requiere migración). Uso: `.venv\Scripts\python.exe -m scripts.audit_uploads`.
 
-## Endpoints de IA (/ai-scan) — endurecimiento
+## Carga manual de documentos (sin IA)
 
-Los endpoints que llaman a OpenAI (`/ai-scan` de worker y vehicle, y la validación
-IA en upload/edit) están protegidos:
-- **Límite de tamaño antes de OpenAI:** `read_upload_capped()` corta con 413 sin
-  cargar más que `MAX_UPLOAD_SIZE_MB` en RAM.
-- **Cliente único:** cada extractor (`worker_ai_extractor`, `vehicle_ai_extractor`)
-  crea un `AsyncOpenAI` una sola vez (lazy) con `timeout=30.0, max_retries=1`. Un
-  timeout se traduce a **504** ("El análisis del documento tardó demasiado"), no 500.
-- **Rate limiting:** `app/core/ratelimit.py` expone la dependencia
-  `rate_limit_ai_scan` — máx. `AI_SCAN_MAX_PER_MINUTE` (default 10) llamadas por
-  usuario/minuto; al exceder → **429**. Es un contador **en memoria por proceso**:
-  si se corre uvicorn con múltiples workers, migrar a Redis (contador compartido).
+La validación y extracción con IA (OpenAI) se **eliminó** del backend: la carga de
+documentos es **manual**. No existe ningún endpoint `/ai-scan` ni llamadas a OpenAI.
 
-### Validación de IA activable/desactivable POR TIPO de documento
+### Resolución de fechas (`app/services/worker_documents.py`)
+Función pura compartida por trabajadores y vehículos:
+- **`resolve_document_dates(issue_str, expiry_str, validity_days)`** — subida (estricta):
+  - Si el tipo tiene vigencia (`validity_days` / `effective_validity_days`) → el
+    vencimiento se **calcula siempre** como `issue_date + validity_days` (ignora
+    cualquier vencimiento manual). Requiere `issue_date` (**422** si falta).
+  - Si el tipo **no** tiene vigencia → el vencimiento es **manual y obligatorio**
+    (**422** si falta).
+  - **Escudo de Vigencia:** un documento ya vencido se bloquea (**400**).
+- **`recompute_edit_dates(...)`** — edición (tolerante): aplica solo las fechas
+  provistas (permite editar otros campos sin reenviarlas); con vigencia recalcula el
+  vencimiento desde la emisión (nueva o la ya guardada). No aplica el escudo de vigencia.
 
-Cada tipo de documento (trabajadores **y** vehículos) tiene el flag
-`ai_validation_enabled: bool` (default `True`, NOT NULL) en su modelo
-(`DocumentType`, `VehicleDocumentType`), expuesto en los schemas de lectura y
-crear/editar, y en `frontend/lib/types.ts`. Permite que el encargado opte por
-**revisión manual** en los tipos que quiera.
+### Endpoints de subida
+- `POST /worker-documents/` y `POST /vehicle-documents/` reciben `issue_date` /
+  `expiry_date` por `Form` y aplican las reglas de arriba. Se conservan
+  `view` / `download` / `get` / `review` (+ `archive` en trabajadores).
 
-- **`False` ⇒ la subida NO llama a OpenAI** (ni escudo de tipo, ni de identidad,
-  ni extracción de fechas por IA): el usuario ingresa las fechas manualmente y el
-  documento se guarda con el flujo clásico. Esto también **ahorra el costo** de la
-  llamada a OpenAI para esos tipos.
-- **Dónde se aplica el corte** (siempre ANTES de contactar OpenAI):
-  - Trabajadores: `resolve_document_dates(..., ai_enabled=doc_type.ai_validation_enabled)`
-    en `app/services/worker_documents.py` (subida y edición).
-  - Vehículos: la condición inline `if settings.OPENAI_API_KEY and vdt.ai_validation_enabled:`
-    en `upload_vehicle_document` / edición.
-  - `/ai-scan` (ambos dominios): reciben `document_type_id` / `vehicle_document_type_id`
-    opcional; si el tipo tiene la validación apagada, responden `ai_validation_enabled=False`
-    con fechas `null` **sin** llamar a OpenAI.
-- **UI (toggle por tipo):** toggle "Validación con IA" en crear/editar tipo de
-  trabajador (`GlobalReqsSection.tsx` + `EditDocTypeModal.tsx`) y de vehículo
-  (`app/vehiculos/documentacion/page.tsx`), con indicador **IA/Manual** en cada
-  listado (`DocTypeRow.tsx` / acción "IA: on/off" por fila).
-- **UI (flujo combinado):** los formularios de subida (`UploadForm.tsx`,
-  `vehicle-profile/DocForm.tsx`) llaman `/ai-scan` con el `document_type_id`
-  (+ `worker_id`) vía el hook `useDocumentAIScan`, y muestran el veredicto con el
-  componente compartido `components/validation/ValidationNotice.tsx`: aviso ámbar
-  en `warn`, advertencia roja específica en `conflict`. Ante `conflict` (preview o
-  409) el botón pasa a "Revisar archivo" y aparece "Subir de todas formas" con
-  checkbox de confirmación que envía `force_validation_override=true`. Todo `match`
-  → sin fricción.
-- **Migración:** `e1f2a3b4c5d6` (agrega la columna con `server_default=true` para
-  respaldar filas existentes y luego lo retira; downgrade la elimina).
-
-### Verificación de titular por IA (SOLO trabajadores, solo por nombre)
-
-Cuando `ai_validation_enabled=True`, además de verificar el TIPO, la IA verifica
-que el documento pertenece a la **persona correcta** comparando **solo el nombre**
-(NUNCA RUT/DNI — decisión de diseño). Aplica **solo a documentos de trabajadores**
-(los vehículos no tienen persona dueña).
-
-- **Contrato de `extract_dates()`** (`app/services/worker_ai_extractor.py`) — el
-  dict de retorno agrega dos campos:
-  - `person_name_detected: str | None` — nombre del titular tal como aparece en el
-    documento (o `None`).
-  - `person_match: str` — **siempre** uno de `"match" | "likely_match" | "mismatch"
-    | "not_found"`. Si la IA no lo devuelve o devuelve un valor inválido, degrada a
-    `"not_found"` (seguro: no alarma).
-    - `match`: corresponde claramente al esperado (tolera orden invertido, segundo
-      nombre/apellido ausente, tildes, mayúsculas, abreviaturas).
-    - `likely_match`: coincidencia parcial o ambigua.
-    - `mismatch`: es claramente de OTRA persona.
-    - `not_found`: el documento no muestra titular (genérico) → **no alarma**.
-- **Nombre esperado:** el endpoint de subida/edición lo obtiene **de la BD** a
-  partir del `worker_id` (`first_name + last_name`), **nunca** de un valor enviado
-  por el cliente. Se pasa vía `resolve_document_dates(..., expected_person_name=...)`.
-- El extractor también agrega `identity_reasoning` (frase breve de la IA). El TIPO se
-  verifica análogamente con `match_confidence` + `type_reasoning` (misma escala de 4
-  valores). La **acción** ante los veredictos la decide el veredicto combinado (abajo).
-
-### Veredicto combinado y política silencio / aviso / confirmación
-
-`app/services/ai_validation.py` combina los veredictos de **tipo** (`match_confidence`)
-e **identidad** (`person_match`) tomando el **PEOR** (`mismatch` > `likely_match` >
-`match`/`not_found`; `not_found` es neutro). Trabajadores combinan {tipo, identidad};
-**vehículos solo {tipo}** (no hay identidad). NO hay bloqueo duro:
-
-| Peor veredicto | Acción | HTTP | Efecto |
-|----------------|--------|------|--------|
-| `match` / `not_found` | `silent` | 201 | guarda sin ruido |
-| `likely_match` | `warn` | 201 | guarda + `warnings[]` (nivel `info`, uno por dimensión dudosa con su `reasoning`) |
-| `mismatch` | `conflict` | **409** | NO guarda; cuerpo estructurado con cada problema |
-
-- **Cuerpo del 409** (`detail`): `{"message", "retryable": true, "override_field":
-  "force_validation_override", "type": {expected, detected, reasoning}?, "identity":
-  {expected_name, detected_name, reasoning}?}` — solo aparecen las dimensiones en
-  `mismatch`.
-- **Override único:** un solo flag de formulario **`force_validation_override`**
-  (bool) cubre tipo **e** identidad, en subida y edición de ambos módulos. Reenviar
-  con `true` guarda igual. Protegido por `require_module(..., WRITE)` — **cualquier
-  usuario con escritura** puede usarlo (NO se exige admin).
-- **Auditoría (migración `f2a3b4c5d6e7`):**
-  - `WorkerDocument.validation_override_used: bool` + `validation_notes: str|null`.
-  - `VehicleDocument.type_override_used: bool` + `validation_notes: str|null` (solo tipo).
-  - `validation_notes` guarda el/los `reasoning` de la IA al momento de subir (para
-    medir después si la IA acierta).
-- **`/ai-scan` (preview):** devuelven ambos veredictos (`match_confidence`,
-  `person_match`), sus `reasoning`, `validation_action` y `warnings[]`/`conflict`
-  para que el frontend muestre todo ANTES de subir. Reciben `document_type_id`
-  (+ `worker_id` en trabajadores) para calcular los veredictos.
-- **Escudo de Vigencia (vehículos):** el bloqueo por documento vencido (**400**) es
-  independiente y NO lo cubre `force_validation_override`.
+### Limpieza de IA (migración `b4c5d6e7f8a9`)
+Todo rastro de IA fue eliminado del backend: no hay settings (`OPENAI_*`,
+`AI_SCAN_MAX_PER_MINUTE`), ni dependencia `openai`/`PyMuPDF`, ni las columnas
+`ai_validation_enabled` (tipos de documento) ni las de auditoría de override
+(`validation_override_used` / `type_override_used` / `validation_notes`). El
+esquema y los schemas quedan limpios.
+>
+> **Frontend también limpio:** se eliminaron el hook `useDocumentAIScan`, el
+> componente `ValidationNotice`, los tipos IA de `lib/types.ts` y los toggles
+> "Validación con IA". Los formularios de subida (`UploadForm`, `EditDocForm`,
+> vehicle `DocForm`) son manuales: emisión + vencimiento calculado por
+> `validity_days` (solo-lectura) o manual si el tipo no tiene vigencia.
 
 ## Tolerancia a fallas e higiene de errores
 
@@ -457,8 +385,6 @@ e **identidad** (`person_match`) tomando el **PEOR** (`mismatch` > `likely_match
 - Nunca poner el objeto de excepción en `detail=` (`f"...: {exc}"`). Patrón: **loggear**
   el detalle (`logger.warning`/`logger.exception`) y **responder** un mensaje genérico.
 - `auth.py`: token inválido/expirado → log + respuesta `"Token inválido o expirado."`
-- Endpoints IA (`/ai-scan`, upload/edit): fallo al contactar OpenAI → log + **502**
-  `"El servicio de análisis no está disponible, intenta más tarde."`
 
 ### Health check (`GET /health`)
 - **Root-level, sin autenticación y fuera del prefijo `/api/v1`** (para load balancers /
@@ -493,7 +419,7 @@ e **identidad** (`person_match`) tomando el **PEOR** (`mismatch` > `likely_match
 3. **Router:** Todo endpoint nuevo debe registrarse en `app/api/v1/router.py` o no será accesible.
 4. **Lint frontend:** Correr `npm run lint` en `frontend/` antes de terminar cualquier sesión que toque `.tsx`/`.ts`.
    **Lint backend:** Correr `ruff check app/` (y `ruff format app/`) antes de terminar cualquier sesión que toque `.py`. Config en `pyproject.toml` (line-length 100; ignores documentados: `B904`, `E501`, `E712` en queries, `F821` en modelos). No agregar `# noqa` sin justificarlo.
-5. **Variables de entorno:** `.env` nunca va al repo (está en `.gitignore`). Usar `.env.example` como plantilla. La clave `OPENAI_API_KEY` debe rotarse si quedó expuesta.
+5. **Variables de entorno:** `.env` nunca va al repo (está en `.gitignore`). Usar `.env.example` como plantilla. Rotar cualquier secreto (`JWT_SECRET_KEY`, credenciales de BD) si quedó expuesto.
 6. **Diseño visual:** El sistema usa estilo SAP Fiori ERP — fondos blancos, tabs con `border-b-2 border-[#003f7a]`, tipografía densa (`text-[11px]`), sin dark mode.
 7. **Async everywhere:** Todos los servicios y endpoints son `async def`. No usar `.execute()` síncrono de SQLAlchemy.
 8. **Subida de archivos:** Toda subida nueva debe pasar por `validate_upload()` (lista blanca + magic bytes) y guardar el MIME derivado de la firma, nunca `file.content_type`. Al servir, usar `resolve_media_type()` + header `nosniff`. Ver "Política de archivos permitidos".

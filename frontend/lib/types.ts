@@ -39,7 +39,6 @@ export interface DocumentType {
   validity_days: number | null
   is_global_base_requirement: boolean
   is_active: boolean
-  ai_validation_enabled: boolean
   alert_percentage_override: number | null
   is_achs: boolean
   achs_category: 'EXAMEN' | 'CURSO' | null
@@ -66,7 +65,6 @@ export interface CreateDocumentTypePayload {
   category_id?: number | null
   validity_days?: number
   is_global_base_requirement?: boolean
-  ai_validation_enabled?: boolean
   alert_percentage_override?: number | null
   is_achs?: boolean
   achs_category?: 'EXAMEN' | 'CURSO' | null
@@ -244,7 +242,6 @@ export interface VehicleDocumentType {
   validity_days: number | null
   is_active: boolean
   is_required_base: boolean
-  ai_validation_enabled: boolean
   alert_days_override: number | null
   created_at: string
   updated_at: string
@@ -329,67 +326,12 @@ export interface VehicleAlertSettings {
   vehicle_global_alert_days: number
 }
 
-// ── Validación por IA (tipo + identidad): silencio / aviso / confirmación ──────
-export type MatchVerdict = 'match' | 'likely_match' | 'mismatch' | 'not_found'
-
-export interface ValidationWarning {
-  dimension: 'type' | 'identity'
-  level: 'info'
-  reasoning: string
-}
-
-export interface ValidationConflictDetail {
-  expected?: string | null
-  detected?: string | null
-  expected_name?: string | null
-  detected_name?: string | null
-  reasoning?: string | null
-}
-
-export interface ValidationConflict {
-  message?: string
-  type?: ValidationConflictDetail
-  identity?: ValidationConflictDetail
-  retryable: boolean
-  override_field: string
-}
-
-export interface VehicleAIScanResult {
-  issue_date: string | null
-  expiry_date: string | null
-  document_type_detected: string | null
-  ai_validation_enabled?: boolean
-  match_confidence?: MatchVerdict
-  type_reasoning?: string | null
-  detected_document_name?: string | null
-  validation_action?: 'silent' | 'warn' | 'conflict'
-  warnings?: ValidationWarning[]
-  conflict?: ValidationConflict | null
-}
-
-export interface WorkerAIScanResult {
-  issue_date: string | null
-  expiry_date: string | null
-  expiry_computed: boolean
-  document_type_detected: string | null
-  ai_validation_enabled?: boolean
-  match_confidence?: MatchVerdict
-  type_reasoning?: string | null
-  person_match?: MatchVerdict
-  person_name_detected?: string | null
-  identity_reasoning?: string | null
-  validation_action?: 'silent' | 'warn' | 'conflict'
-  warnings?: ValidationWarning[]
-  conflict?: ValidationConflict | null
-}
-
 export interface CreateVehicleDocumentTypePayload {
   name: string
   description?: string
   validity_days?: number
   alert_days_override?: number | null
   is_required_base?: boolean
-  ai_validation_enabled?: boolean
 }
 
 

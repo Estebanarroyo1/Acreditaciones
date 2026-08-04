@@ -8,6 +8,7 @@ Cubre los criterios de aceptación de la auditoría XSS:
   - PNG con extensión .jpg   → 422
   - header X-Content-Type-Options: nosniff en la descarga
 """
+
 import pytest
 import pytest_asyncio
 from fastapi import FastAPI
@@ -31,6 +32,7 @@ HTML_BYTES = b"<html><body><script>alert(document.cookie)</script></body></html>
 
 class _FakeAdmin:
     """Usuario simulado — omite la validación del JWT local en tests."""
+
     id = 1
     is_admin = True
     is_active = True
@@ -39,13 +41,6 @@ class _FakeAdmin:
 
 @pytest_asyncio.fixture
 async def ctx():
-    # Aislar la capa de seguridad de archivos: deshabilitar la IA para que los
-    # "escudos" de OpenAI no interfieran con la validación de firma/extensión.
-    from app.core.config import settings as _settings
-
-    _orig_key = _settings.OPENAI_API_KEY
-    _settings.OPENAI_API_KEY = ""
-
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -76,7 +71,6 @@ async def ctx():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
     await engine.dispose()
-    _settings.OPENAI_API_KEY = _orig_key
 
 
 # ── Trabajadores ─────────────────────────────────────────────────────────────
@@ -91,7 +85,8 @@ async def test_worker_html_renamed_to_pdf_rejected(ctx):
 async def test_worker_real_pdf_created(ctx):
     client, _session, dt_id, _vdt_id = ctx
     files = {"file": ("cedula.pdf", PDF_BYTES, "application/pdf")}
-    data = {"worker_id": "1", "document_type_id": str(dt_id)}
+    # El tipo no tiene vigencia → el vencimiento manual es obligatorio (flujo manual).
+    data = {"worker_id": "1", "document_type_id": str(dt_id), "expiry_date": "2999-12-31"}
     r = await client.post("/worker-documents/", data=data, files=files)
     assert r.status_code == 201, r.text
     # El MIME guardado se deriva de la firma, no del Content-Type del cliente.
@@ -102,7 +97,7 @@ async def test_worker_client_content_type_is_ignored(ctx):
     # El cliente miente diciendo image/png, pero el archivo es un PDF real.
     client, _session, dt_id, _vdt_id = ctx
     files = {"file": ("cedula.pdf", PDF_BYTES, "image/png")}
-    data = {"worker_id": "1", "document_type_id": str(dt_id)}
+    data = {"worker_id": "1", "document_type_id": str(dt_id), "expiry_date": "2999-12-31"}
     r = await client.post("/worker-documents/", data=data, files=files)
     assert r.status_code == 201, r.text
     assert r.json()["mime_type"] == "application/pdf"
@@ -171,7 +166,8 @@ async def test_vehicle_html_renamed_to_pdf_rejected(ctx):
 async def test_vehicle_real_pdf_created(ctx):
     client, _session, _dt_id, vdt_id = ctx
     files = {"file": ("permiso.pdf", PDF_BYTES, "application/pdf")}
-    data = {"vehicle_id": "1", "vehicle_document_type_id": str(vdt_id)}
+    # El tipo no tiene vigencia → el vencimiento manual es obligatorio (flujo manual).
+    data = {"vehicle_id": "1", "vehicle_document_type_id": str(vdt_id), "expiry_date": "2999-12-31"}
     r = await client.post("/vehicle-documents/", data=data, files=files)
     assert r.status_code == 201, r.text
     assert r.json()["mime_type"] == "application/pdf"

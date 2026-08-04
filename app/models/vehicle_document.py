@@ -47,10 +47,6 @@ class VehicleDocument(Base, TimestampMixin):
     reviewer_notes: Mapped[str | None] = mapped_column(Text)
     custom_alert_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
-    # Auditoría de validación IA (solo TIPO; los vehículos no tienen identidad).
-    type_override_used: Mapped[bool] = mapped_column(default=False, nullable=False)
-    validation_notes: Mapped[str | None] = mapped_column(Text)
-
     vehicle: Mapped["Vehicle"] = relationship(back_populates="documents")
     vehicle_document_type: Mapped["VehicleDocumentType"] = relationship(
         back_populates="vehicle_documents", lazy="selectin"

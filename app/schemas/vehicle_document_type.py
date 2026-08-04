@@ -9,7 +9,6 @@ class VehicleDocumentTypeBase(BaseModel):
     description: Optional[str] = None
     validity_days: Optional[int] = None
     alert_days_override: Optional[int] = None
-    ai_validation_enabled: bool = True
     is_required_base: bool = True
 
 
@@ -23,7 +22,6 @@ class VehicleDocumentTypeUpdate(BaseModel):
     validity_days: Optional[int] = None
     is_active: Optional[bool] = None
     alert_days_override: Optional[int] = None
-    ai_validation_enabled: Optional[bool] = None
     is_required_base: Optional[bool] = None
 
 

@@ -77,12 +77,6 @@ class Settings(BaseSettings):
     # CORS — comma-separated origins; override in production
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:3001"]
 
-    # OpenAI — leave empty to disable AI extraction
-    OPENAI_API_KEY: str = ""
-    OPENAI_MODEL: str = "gpt-4o"
-    # Rate limit para los endpoints /ai-scan: máximo de llamadas por usuario/minuto.
-    AI_SCAN_MAX_PER_MINUTE: int = 10
-
     # Autenticación local (email + contraseña, JWT firmado por nosotros con HS256)
     # Valor de ejemplo inseguro para que dev arranque sin configuración. En
     # producción la app se NIEGA a arrancar si sigue siendo este default o está vacío.

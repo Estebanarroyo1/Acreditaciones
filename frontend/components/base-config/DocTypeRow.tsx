@@ -24,16 +24,6 @@ export function DocTypeRow({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
             <p className="text-sm font-medium text-slate-800 truncate">{docType.name}</p>
-            <span
-              title={docType.ai_validation_enabled ? 'Validación con IA activa' : 'Revisión manual (sin IA)'}
-              className={`shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide ${
-                docType.ai_validation_enabled
-                  ? 'bg-blue-50 text-blue-600 border border-blue-200'
-                  : 'bg-slate-100 text-slate-500 border border-slate-200'
-              }`}
-            >
-              {docType.ai_validation_enabled ? 'IA' : 'Manual'}
-            </span>
             {showAchsBadge && docType.achs_category && (
               <span className={`shrink-0 inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide ${
                 docType.achs_category === 'EXAMEN'

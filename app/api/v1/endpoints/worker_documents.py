@@ -1,16 +1,14 @@
 import logging
 import os
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
-from openai import APITimeoutError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.permissions import Module, PermissionLevel, require_module
-from app.core.ratelimit import rate_limit_ai_scan
 from app.db.session import get_db
 from app.models.associations import (
     DocumentStatus,
@@ -19,18 +17,14 @@ from app.models.associations import (
     WorkerProject,
 )
 from app.models.document_type import DocumentType
-from app.models.worker import Worker
-from app.schemas.ai_validation import ValidationWarning
 from app.schemas.worker_document import WorkerDocumentRead, WorkerDocumentUpdate
-from app.services.ai_validation import Dimension, combine
 from app.services.storage import (
     delete_file,
-    read_upload_capped,
     resolve_media_type,
     save_upload,
     validate_upload_head,
 )
-from app.services.worker_documents import resolve_document_dates
+from app.services.worker_documents import recompute_edit_dates, resolve_document_dates
 
 logger = logging.getLogger(__name__)
 
@@ -41,120 +35,10 @@ _W = [Depends(require_module(Module.trabajadores, PermissionLevel.write))]
 
 
 @router.post(
-    "/ai-scan",
-    summary="Analizar documento con IA y extraer fechas (sin guardar)",
-    dependencies=[*_W, Depends(rate_limit_ai_scan)],
-)
-async def ai_scan_worker_document(
-    file: UploadFile = File(...),
-    validity_days: int | None = Form(None),
-    document_type_id: int | None = Form(None),
-    worker_id: int | None = Form(None),
-    db: AsyncSession = Depends(get_db),
-):
-    from app.core.config import settings
-    from app.services.worker_ai_extractor import extract_dates
-
-    # Contexto esperado para los veredictos: nombre del tipo y del titular (BD).
-    expected_type_name: str | None = None
-    if document_type_id is not None:
-        doc_type = await db.get(DocumentType, document_type_id)
-        # Si el tipo tiene la validación de IA apagada, se SALTA la IA por completo.
-        if doc_type is not None and not doc_type.ai_validation_enabled:
-            return {
-                "issue_date": None,
-                "expiry_date": None,
-                "expiry_computed": False,
-                "document_type_detected": None,
-                "ai_validation_enabled": False,
-                "match_confidence": "not_found",
-                "person_match": "not_found",
-                "validation_action": "silent",
-                "warnings": [],
-                "conflict": None,
-            }
-        expected_type_name = doc_type.name if doc_type else None
-
-    expected_person_name: str | None = None
-    if worker_id is not None:
-        worker = await db.get(Worker, worker_id)
-        expected_person_name = (
-            f"{worker.first_name} {worker.last_name}".strip() if worker else None
-        )
-
-    if not settings.OPENAI_API_KEY:
-        raise HTTPException(status_code=503, detail="Servicio de IA no configurado.")
-
-    # Aplica el límite de tamaño ANTES de enviar nada a OpenAI.
-    content = await read_upload_capped(file)
-    try:
-        result = await extract_dates(
-            content,
-            file.content_type or "",
-            file.filename or "",
-            expected_type_name,
-            expected_person_name,
-        )
-    except APITimeoutError:
-        raise HTTPException(status_code=504, detail="El análisis del documento tardó demasiado.")
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
-    except Exception:
-        logger.exception("Fallo al contactar OpenAI en ai-scan de worker document")
-        raise HTTPException(
-            status_code=502,
-            detail="El servicio de análisis no está disponible, intenta más tarde.",
-        )
-
-    # When validity_days is configured, ALWAYS compute expiry from issue_date + validity_days.
-    # The document text might say "valid 2 years" but the system config takes precedence.
-    # expiry_computed=True signals the frontend to show a suggestion strip (not auto-fill).
-    expiry_computed = False
-    if validity_days and result.get("issue_date"):
-        try:
-            issue = date.fromisoformat(result["issue_date"])
-            result["expiry_date"] = (issue + timedelta(days=validity_days)).isoformat()
-            expiry_computed = True
-        except ValueError:
-            pass
-
-    # Preview de veredictos combinados (tipo + identidad) para que el frontend
-    # muestre avisos/conflicto ANTES de subir.
-    verdict = combine([
-        Dimension(
-            key="type", verdict=result["match_confidence"],
-            reasoning=result.get("type_reasoning"),
-            expected=expected_type_name, detected=result.get("document_type_detected"),
-        ),
-        Dimension(
-            key="identity", verdict=result["person_match"],
-            reasoning=result.get("identity_reasoning"),
-            expected=expected_person_name, detected=result.get("person_name_detected"),
-        ),
-    ])
-
-    return {
-        "issue_date": result["issue_date"],
-        "expiry_date": result["expiry_date"],
-        "expiry_computed": expiry_computed,
-        "document_type_detected": result["document_type_detected"],
-        "ai_validation_enabled": True,
-        "match_confidence": result["match_confidence"],
-        "type_reasoning": result.get("type_reasoning"),
-        "person_match": result["person_match"],
-        "person_name_detected": result.get("person_name_detected"),
-        "identity_reasoning": result.get("identity_reasoning"),
-        "validation_action": verdict.action,
-        "warnings": verdict.warnings,
-        "conflict": verdict.conflict,
-    }
-
-
-@router.post(
     "/",
     response_model=WorkerDocumentRead,
     status_code=status.HTTP_201_CREATED,
-    summary="Subir documento de acreditación",
+    summary="Subir documento de acreditación (carga manual)",
     dependencies=_W,
 )
 async def upload_document(
@@ -163,15 +47,11 @@ async def upload_document(
     document_type_id: int = Form(...),
     issue_date: str | None = Form(None, description="Fecha de emisión YYYY-MM-DD"),
     expiry_date: str | None = Form(None, description="Fecha de vencimiento YYYY-MM-DD"),
-    force_validation_override: bool = Form(
-        False, description="Reenviar tras un 409 para saltar el conflicto de tipo/identidad"
-    ),
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
 ):
-    # --- Validate file type (whitelist + magic bytes) BEFORE any AI/processing ---
-    # Lee solo el primer chunk (no carga el archivo entero en RAM). save_upload
-    # revalida y hace streaming a disco como defensa en profundidad.
+    # --- Validate file type (whitelist + magic bytes) antes de tocar el disco ---
+    # Lee solo el primer chunk; save_upload revalida y hace streaming como defensa.
     await validate_upload_head(file)
 
     # --- Load and validate document type ---
@@ -223,68 +103,17 @@ async def upload_document(
                     detail="Ese tipo de documento no es requerido por el proyecto.",
                 )
 
-    # --- Nombre del titular esperado: SIEMPRE desde la BD (worker_id), nunca del
-    #     cliente. Se usa para que la IA verifique que el documento es de esa persona.
-    worker = await db.get(Worker, worker_id)
-    expected_person_name = (
-        f"{worker.first_name} {worker.last_name}".strip() if worker else None
+    # --- Resolución de fechas: manual + cálculo por validity_days (sin IA) ---
+    parsed_issue, parsed_expiry = resolve_document_dates(
+        issue_date, expiry_date, doc_type.effective_validity_days
     )
-
-    # --- Date resolution: parse + AI fill + validity fallback + expired check ---
-    # Si el tipo tiene la validación de IA apagada, se salta la IA (fechas manuales).
-    parsed_issue, parsed_expiry, ai_result = await resolve_document_dates(
-        issue_date,
-        expiry_date,
-        file,
-        doc_type.name,
-        doc_type.effective_validity_days,
-        ai_enabled=doc_type.ai_validation_enabled,
-        expected_person_name=expected_person_name,
-    )
-
-    # --- Combinar veredictos IA (TIPO + IDENTIDAD): silencio / aviso / confirmación ---
-    dimensions: list[Dimension] = []
-    if ai_result is not None:
-        dimensions.append(
-            Dimension(
-                key="type",
-                verdict=ai_result.get("match_confidence", "not_found"),
-                reasoning=ai_result.get("type_reasoning"),
-                expected=doc_type.name,
-                detected=ai_result.get("document_type_detected"),
-            )
-        )
-        dimensions.append(
-            Dimension(
-                key="identity",
-                verdict=ai_result.get("person_match", "not_found"),
-                reasoning=ai_result.get("identity_reasoning"),
-                expected=expected_person_name,
-                detected=ai_result.get("person_name_detected"),
-            )
-        )
-    verdict = combine(dimensions)
-
-    override_used = False
-    if verdict.action == "conflict":
-        if not force_validation_override:
-            # NO se guarda: 409 con el detalle de CADA problema + flag de reintento.
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "message": "El documento no superó la validación de IA. "
-                    "Revisa los problemas detectados o confirma para subir de todas formas.",
-                    **verdict.conflict,
-                },
-            )
-        override_used = True  # el usuario (con permiso de escritura) confirmó el override
 
     # --- Persist the file ---
     file_path, mime_type, file_size = await save_upload(
         file, project_id, worker_id, document_type_id
     )
 
-    # --- Create DB record ---
+    # --- Create DB record (columnas de auditoría de validación quedan en default) ---
     doc = WorkerDocument(
         worker_id=worker_id,
         project_id=project_id,
@@ -297,8 +126,6 @@ async def upload_document(
         issue_date=parsed_issue,
         expiry_date=parsed_expiry,
         status=DocumentStatus.PENDING,
-        validation_override_used=override_used,
-        validation_notes=verdict.notes,
     )
     db.add(doc)
     try:
@@ -315,9 +142,7 @@ async def upload_document(
         .where(WorkerDocument.id == doc.id)
         .options(selectinload(WorkerDocument.document_type))
     )
-    response = WorkerDocumentRead.model_validate(refreshed.scalar_one())
-    response.warnings = [ValidationWarning(**w) for w in verdict.warnings]
-    return response
+    return refreshed.scalar_one()
 
 
 @router.get("/{doc_id}/view", dependencies=_R)
@@ -382,7 +207,7 @@ async def get_document(doc_id: int, db: AsyncSession = Depends(get_db)):
 @router.patch(
     "/{doc_id}",
     response_model=WorkerDocumentRead,
-    summary="Editar fecha de vencimiento y/o reemplazar archivo",
+    summary="Editar fechas y/o reemplazar archivo (carga manual)",
     dependencies=_W,
 )
 async def edit_document(
@@ -404,23 +229,14 @@ async def edit_document(
     if not doc:
         raise HTTPException(status_code=404, detail="Documento no encontrado.")
 
-    # Validate replacement file early (whitelist + magic bytes) before AI/processing.
+    # Validate replacement file early (whitelist + magic bytes) antes de procesar.
     if file is not None:
         await validate_upload_head(file)
 
-    dt_name = doc.document_type.name if doc.document_type else None
     effective_vd = doc.document_type.effective_validity_days if doc.document_type else None
-    ai_enabled = doc.document_type.ai_validation_enabled if doc.document_type else True
-    # Nombre del titular esperado desde la BD (dueño del documento), no del cliente.
-    worker = await db.get(Worker, doc.worker_id)
-    expected_person_name = (
-        f"{worker.first_name} {worker.last_name}".strip() if worker else None
-    )
-    # La combinación de veredictos (409/aviso) aplica al flujo de SUBIDA; la edición
-    # solo re-resuelve fechas (ignora ai_result).
-    parsed_issue, parsed_expiry, _ai_result = await resolve_document_dates(
-        issue_date, expiry_date, file, dt_name, effective_vd,
-        ai_enabled=ai_enabled, expected_person_name=expected_person_name,
+    # Edición parcial de fechas (manual + recálculo por validity_days, sin IA).
+    doc.issue_date, doc.expiry_date = recompute_edit_dates(
+        issue_date, expiry_date, effective_vd, doc.issue_date, doc.expiry_date
     )
 
     old_path: str | None = None
@@ -438,10 +254,6 @@ async def edit_document(
         doc.upload_date = datetime.now(timezone.utc)
         doc.status = DocumentStatus.PENDING
 
-    if parsed_issue is not None:
-        doc.issue_date = parsed_issue
-    if parsed_expiry is not None:
-        doc.expiry_date = parsed_expiry
     if custom_alert_percentage is not None:
         # 0 = explicit clear; 1-100 = set override
         doc.custom_alert_percentage = (

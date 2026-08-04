@@ -40,7 +40,6 @@ export default function DocumentacionPage() {
   const [validityDays, setValidityDays] = useState('')
   const [alertDays, setAlertDays] = useState('')
   const [isRequired, setIsRequired] = useState(true)
-  const [aiValidation, setAiValidation] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState('')
 
@@ -78,9 +77,8 @@ export default function DocumentacionPage() {
         validity_days: validityDays ? parseInt(validityDays) : undefined,
         alert_days_override: alertDays ? parseInt(alertDays) : undefined,
         is_required_base: isRequired,
-        ai_validation_enabled: aiValidation,
       })
-      setName(''); setDescription(''); setValidityDays(''); setAlertDays(''); setIsRequired(true); setAiValidation(true)
+      setName(''); setDescription(''); setValidityDays(''); setAlertDays(''); setIsRequired(true)
       setShowForm(false)
       await load()
     } catch {
@@ -102,14 +100,6 @@ export default function DocumentacionPage() {
     setSavingId(t.id)
     try {
       await api.updateVehicleDocumentType(t.id, { is_required_base: !t.is_required_base })
-      await load()
-    } catch { /* ignore */ } finally { setSavingId(null) }
-  }
-
-  const toggleAiValidation = async (t: VehicleDocumentType) => {
-    setSavingId(t.id)
-    try {
-      await api.updateVehicleDocumentType(t.id, { ai_validation_enabled: !t.ai_validation_enabled })
       await load()
     } catch { /* ignore */ } finally { setSavingId(null) }
   }
@@ -172,19 +162,6 @@ export default function DocumentacionPage() {
                   </p>
                 </div>
               </div>
-              <div className="col-span-2 flex items-center gap-3 py-1">
-                <Toggle checked={aiValidation} onChange={setAiValidation} />
-                <div>
-                  <p className="text-xs font-semibold text-slate-700">
-                    {aiValidation ? 'Validación con IA al subir' : 'Revisión manual (sin IA)'}
-                  </p>
-                  <p className="text-[10px] text-slate-400">
-                    {aiValidation
-                      ? 'La IA valida el tipo y extrae las fechas del documento'
-                      : 'El encargado ingresa las fechas manualmente; no se llama a la IA'}
-                  </p>
-                </div>
-              </div>
             </div>
             <div className="flex gap-2">
               <button type="submit" disabled={submitting} className={BTN_PRIMARY}>
@@ -236,9 +213,7 @@ export default function DocumentacionPage() {
                         t={t}
                         savingId={savingId}
                         onToggleActive={toggleActive}
-                        onToggleRequired={toggleRequired}
-                        onToggleAi={toggleAiValidation}
-                      />
+                        onToggleRequired={toggleRequired}                      />
                     ))}
                   </tbody>
                 </table>
@@ -278,9 +253,7 @@ export default function DocumentacionPage() {
                         t={t}
                         savingId={savingId}
                         onToggleActive={toggleActive}
-                        onToggleRequired={toggleRequired}
-                        onToggleAi={toggleAiValidation}
-                      />
+                        onToggleRequired={toggleRequired}                      />
                     ))}
                   </tbody>
                 </table>
@@ -298,13 +271,11 @@ function DocTypeRow({
   savingId,
   onToggleActive,
   onToggleRequired,
-  onToggleAi,
 }: {
   t: VehicleDocumentType
   savingId: number | null
   onToggleActive: (t: VehicleDocumentType) => void
   onToggleRequired: (t: VehicleDocumentType) => void
-  onToggleAi: (t: VehicleDocumentType) => void
 }) {
   const saving = savingId === t.id
   return (
@@ -326,14 +297,6 @@ function DocTypeRow({
       </td>
       <td className="px-3 py-1.5 text-right whitespace-nowrap">
         <div className="flex items-center justify-end gap-3">
-          <button
-            disabled={saving}
-            onClick={() => onToggleAi(t)}
-            title={t.ai_validation_enabled ? 'Desactivar validación con IA (revisión manual)' : 'Activar validación con IA'}
-            className={`text-[10px] disabled:opacity-40 ${t.ai_validation_enabled ? 'text-[#003f7a] hover:text-[#005096]' : 'text-slate-400 hover:text-slate-600'}`}
-          >
-            {t.ai_validation_enabled ? 'IA: on' : 'IA: off'}
-          </button>
           <button
             disabled={saving}
             onClick={() => onToggleRequired(t)}
