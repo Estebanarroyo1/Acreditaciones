@@ -11,6 +11,7 @@ class DocumentTypeBase(BaseModel):
     category_id: int | None = None
     validity_days: int | None = None
     is_active: bool = True
+    ai_validation_enabled: bool = True
     is_global_base_requirement: bool = False
     alert_percentage_override: int | None = None
     is_achs: bool = False
@@ -27,6 +28,7 @@ class DocumentTypeUpdate(BaseModel):
     category_id: int | None = None
     validity_days: int | None = None
     is_active: bool | None = None
+    ai_validation_enabled: bool | None = None
     is_global_base_requirement: bool | None = None
     alert_percentage_override: int | None = None
     is_achs: bool | None = None

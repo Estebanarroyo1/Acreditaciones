@@ -13,6 +13,9 @@ class VehicleDocumentType(Base, TimestampMixin):
     validity_days: Mapped[int | None] = mapped_column(Integer)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     alert_days_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Si es False, la subida de este tipo NO pasa por validación de IA (ni tipo,
+    # ni identidad, ni fechas): el encargado ingresa las fechas manualmente.
+    ai_validation_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_required_base: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     vehicle_documents: Mapped[list["VehicleDocument"]] = relationship(

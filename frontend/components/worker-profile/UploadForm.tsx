@@ -1,7 +1,9 @@
 'use client'
 
 import { useState } from 'react'
+import type { ValidationConflict } from '@/lib/types'
 import { api } from '@/lib/api'
+import { ValidationNotice, deriveConflict } from '@/components/validation/ValidationNotice'
 import { useDocumentAIScan } from './useDocumentAIScan'
 
 export function UploadForm({
@@ -20,6 +22,8 @@ export function UploadForm({
   onSuccess: () => void
 }) {
   const [uploading, setUploading] = useState(false)
+  const [overrideConfirm, setOverrideConfirm] = useState(false)
+  const [submitConflict, setSubmitConflict] = useState<ValidationConflict | null>(null)
   const {
     file, setFile,
     issueDate, setIssueDate,
@@ -35,42 +39,49 @@ export function UploadForm({
     checkExpiryStatus,
     acceptSuggestion,
     handleAiScan,
-  } = useDocumentAIScan({ validityDays })
+  } = useDocumentAIScan({ validityDays, documentTypeId, workerId })
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
+  // Conflicto = el del preview (/ai-scan) o el del 409 al subir.
+  const scanConflict =
+    aiResult?.validation_action === 'conflict' ? aiResult.conflict ?? null : null
+  const conflict = submitConflict ?? scanConflict
+  const action = submitConflict ? 'conflict' : aiResult?.validation_action
+  const warnings = aiResult?.warnings
+
+  const resetAiState = () => {
+    setAiResult(null); setBlockedError(''); setExpiryWarning('')
+    setSuggestedExpiry(null); setScanNoResults(false); setError('')
+    setSubmitConflict(null); setOverrideConfirm(false)
+  }
+
+  const doUpload = async (override: boolean) => {
     if (!file) return
     setUploading(true)
-    setError('')
-    setBlockedError('')
-    setExpiryWarning('')
+    setError(''); setBlockedError(''); setExpiryWarning('')
     try {
+      const base = {
+        worker_id: workerId,
+        document_type_id: documentTypeId,
+        issue_date: issueDate || undefined,
+        expiry_date: expiryDate || undefined,
+        file,
+        force_validation_override: override,
+      }
       if (isGlobal) {
-        await api.uploadDocument({
-          worker_id: workerId,
-          document_type_id: documentTypeId,
-          issue_date: issueDate || undefined,
-          expiry_date: expiryDate || undefined,
-          file,
-        })
+        await api.uploadDocument(base)
       } else {
-        await Promise.all(
-          projectIds.map((pid) =>
-            api.uploadDocument({
-              worker_id: workerId,
-              project_id: pid,
-              document_type_id: documentTypeId,
-              issue_date: issueDate || undefined,
-              expiry_date: expiryDate || undefined,
-              file,
-            })
-          )
-        )
+        await Promise.all(projectIds.map((pid) => api.uploadDocument({ ...base, project_id: pid })))
       }
       onSuccess()
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Error al subir'
-      if ((err as { httpStatus?: number }).httpStatus === 400) {
+      const httpStatus = (err as { httpStatus?: number }).httpStatus
+      const c = deriveConflict((err as { detail?: unknown }).detail)
+      if (httpStatus === 409 && c) {
+        // Conflicto de validación: abre la confirmación en vez de un error genérico.
+        setSubmitConflict(c)
+        setOverrideConfirm(false)
+      } else if (httpStatus === 400) {
         setBlockedError(msg)
         setFile(null)
         setAiResult(null)
@@ -80,6 +91,12 @@ export function UploadForm({
     } finally {
       setUploading(false)
     }
+  }
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!file || conflict) return // con conflicto se usa "Subir de todas formas"
+    doUpload(false)
   }
 
   return (
@@ -104,6 +121,9 @@ export function UploadForm({
         </div>
       )}
 
+      {/* Veredicto combinado de IA (aviso ámbar / conflicto rojo) */}
+      <ValidationNotice action={action} warnings={warnings} conflict={conflict} />
+
       {expiryWarning && (
         <div className="bg-amber-50 border-l-4 border-amber-500 text-amber-800 px-3 py-2 rounded-sm text-xs flex items-start gap-2">
           <svg className="w-4 h-4 mt-0.5 shrink-0 text-amber-500" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
@@ -113,7 +133,7 @@ export function UploadForm({
         </div>
       )}
 
-      {aiResult && !scanNoResults && !error && !blockedError && (
+      {aiResult && !scanNoResults && !error && !blockedError && !conflict && action !== 'warn' && (
         <div className="flex items-center gap-1.5 px-2.5 py-2 bg-violet-50 border border-violet-200 rounded text-xs text-violet-700">
           <svg className="w-3.5 h-3.5 shrink-0 text-violet-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
@@ -165,13 +185,13 @@ export function UploadForm({
           ref={inputRef}
           type="file"
           className="hidden"
-          onChange={(e) => { setFile(e.target.files?.[0] ?? null); setAiResult(null); setBlockedError(''); setExpiryWarning(''); setSuggestedExpiry(null); setScanNoResults(false); setError('') }}
+          onChange={(e) => { setFile(e.target.files?.[0] ?? null); resetAiState() }}
           accept=".pdf,.jpg,.jpeg,.png"
         />
         {file && !scanning && (
           <button
             type="button"
-            onClick={handleAiScan}
+            onClick={() => { setSubmitConflict(null); setOverrideConfirm(false); handleAiScan() }}
             className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-md bg-violet-100 text-violet-700 border border-violet-200 hover:bg-violet-200 transition-colors"
           >
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
@@ -213,13 +233,46 @@ export function UploadForm({
         </div>
       </div>
       {error && <p className="text-xs text-red-600 font-medium">{error}</p>}
-      <button
-        type="submit"
-        disabled={!file || uploading || !!blockedError}
-        className="w-full py-1.5 text-xs font-semibold rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-      >
-        {uploading ? 'Subiendo…' : 'Subir documento'}
-      </button>
+
+      {conflict ? (
+        // Camino de conflicto: revisar archivo o confirmar explícitamente el override.
+        <div className="space-y-2">
+          <label className="flex items-start gap-2 text-xs text-slate-600 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={overrideConfirm}
+              onChange={(e) => setOverrideConfirm(e.target.checked)}
+              className="mt-0.5 accent-red-600"
+            />
+            <span>Revisé el documento y quiero subirlo de todas formas.</span>
+          </label>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => { inputRef.current?.click() }}
+              className="flex-1 py-1.5 text-xs font-semibold rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors"
+            >
+              Revisar archivo
+            </button>
+            <button
+              type="button"
+              onClick={() => doUpload(true)}
+              disabled={!file || uploading || !overrideConfirm}
+              className="flex-1 py-1.5 text-xs font-semibold rounded-md bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {uploading ? 'Subiendo…' : 'Subir de todas formas'}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="submit"
+          disabled={!file || uploading || !!blockedError}
+          className="w-full py-1.5 text-xs font-semibold rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        >
+          {uploading ? 'Subiendo…' : 'Subir documento'}
+        </button>
+      )}
     </form>
   )
 }

@@ -36,6 +36,7 @@ export function GlobalReqsSection({
   const [validityDays, setValidityDays] = useState('')
   const [alertPct, setAlertPct] = useState('')
   const [isGlobal, setIsGlobal] = useState(true)
+  const [aiValidation, setAiValidation] = useState(true)
   const [isAchs, setIsAchs] = useState(false)
   const [achsCategory, setAchsCategory] = useState<'EXAMEN' | 'CURSO' | ''>('')
   const [submitting, setSubmitting] = useState(false)
@@ -47,7 +48,7 @@ export function GlobalReqsSection({
 
   const resetForm = () => {
     setName(''); setCategoryId(''); setValidityDays(''); setAlertPct('')
-    setIsGlobal(true); setIsAchs(false); setAchsCategory(''); setError('')
+    setIsGlobal(true); setAiValidation(true); setIsAchs(false); setAchsCategory(''); setError('')
   }
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -60,6 +61,7 @@ export function GlobalReqsSection({
       const payload: CreateDocumentTypePayload = {
         name: name.trim(),
         is_global_base_requirement: isGlobal,
+        ai_validation_enabled: aiValidation,
       }
       if (categoryId) payload.category_id = parseInt(categoryId)
       if (validityDays) payload.validity_days = parseInt(validityDays)
@@ -182,6 +184,23 @@ export function GlobalReqsSection({
                 </button>
                 <span className="text-xs font-semibold text-slate-600">Requisito global</span>
               </label>
+            </div>
+          </div>
+
+          <div className="flex items-start gap-3 pt-3 border-t border-slate-100">
+            <button
+              type="button"
+              onClick={() => setAiValidation((v) => !v)}
+              className={`relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors ${aiValidation ? 'bg-blue-600' : 'bg-slate-300'}`}
+              role="switch" aria-checked={aiValidation}
+            >
+              <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transform transition-transform ${aiValidation ? 'translate-x-4' : 'translate-x-0'}`} />
+            </button>
+            <div>
+              <p className="text-xs font-semibold text-slate-600">Validación con IA</p>
+              <p className="text-[10px] text-slate-400">
+                Si lo desactivas, los documentos de este tipo se suben sin revisión automática (control manual).
+              </p>
             </div>
           </div>
 

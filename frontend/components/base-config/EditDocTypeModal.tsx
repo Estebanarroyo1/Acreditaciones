@@ -21,6 +21,7 @@ export function EditDocTypeModal({
   const [validityDays, setValidityDays] = useState(docType.validity_days ? String(docType.validity_days) : '')
   const [alertPct, setAlertPct]         = useState(docType.alert_percentage_override != null ? String(docType.alert_percentage_override) : '')
   const [isGlobal, setIsGlobal]         = useState(docType.is_global_base_requirement)
+  const [aiValidation, setAiValidation] = useState(docType.ai_validation_enabled)
   const [isAchs, setIsAchs]             = useState(docType.is_achs)
   const [achsCategory, setAchsCategory] = useState<'EXAMEN' | 'CURSO' | ''>(docType.achs_category ?? '')
   const [submitting, setSubmitting]     = useState(false)
@@ -40,6 +41,7 @@ export function EditDocTypeModal({
         validity_days: validityDays ? parseInt(validityDays) : undefined,
         alert_percentage_override: alertPct ? parseInt(alertPct) : null,
         is_global_base_requirement: isGlobal,
+        ai_validation_enabled: aiValidation,
         is_achs: isAchs,
         achs_category: isAchs ? (achsCategory || null) : null,
       })
@@ -106,6 +108,22 @@ export function EditDocTypeModal({
                 </button>
                 <span className="text-xs font-semibold text-slate-600">Requisito global</span>
               </label>
+            </div>
+            <div className="col-span-2 flex items-center gap-3">
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <button
+                  type="button"
+                  onClick={() => setAiValidation((v) => !v)}
+                  className={`relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors ${aiValidation ? 'bg-blue-600' : 'bg-slate-300'}`}
+                  role="switch" aria-checked={aiValidation}
+                >
+                  <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transform transition-transform ${aiValidation ? 'translate-x-4' : 'translate-x-0'}`} />
+                </button>
+                <span className="text-xs font-semibold text-slate-600">Validación con IA al subir</span>
+              </label>
+              <span className="text-[10px] text-slate-400">
+                {aiValidation ? 'La IA extrae fechas y valida el documento.' : 'Revisión manual: el encargado ingresa las fechas.'}
+              </span>
             </div>
           </div>
 

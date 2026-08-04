@@ -42,6 +42,25 @@ function handle401(res: Response) {
   }
 }
 
+/**
+ * Convierte el campo `detail` de un error de FastAPI en un mensaje legible.
+ * FastAPI lo devuelve como string (HTTPException) o como lista de objetos de
+ * validación (422: `[{loc, msg, type}, ...]`). Sin esto, una lista se renderiza
+ * como "[object Object]" al pasarla a `new Error(...)`.
+ */
+export function detailToMessage(detail: unknown, fallback: string): string {
+  if (typeof detail === 'string' && detail.trim()) return detail
+  if (Array.isArray(detail)) {
+    const msgs = detail
+      .map((d) =>
+        d && typeof d === 'object' && 'msg' in d ? String((d as { msg: unknown }).msg) : null,
+      )
+      .filter((m): m is string => Boolean(m))
+    if (msgs.length) return msgs.join('; ')
+  }
+  return fallback
+}
+
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`, { cache: 'no-store', headers: authHeaders() })
   handle401(res)
@@ -73,7 +92,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   handle401(res)
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
-    throw new Error(err?.detail ?? `${res.status} ${res.statusText}`)
+    throw new Error(detailToMessage(err?.detail, `${res.status} ${res.statusText}`))
   }
   return res.json() as Promise<T>
 }
@@ -87,7 +106,7 @@ async function patch<T>(path: string, body: unknown): Promise<T> {
   handle401(res)
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
-    throw new Error(err?.detail ?? `${res.status} ${res.statusText}`)
+    throw new Error(detailToMessage(err?.detail, `${res.status} ${res.statusText}`))
   }
   return res.json() as Promise<T>
 }
@@ -101,7 +120,7 @@ async function put<T>(path: string, body: unknown): Promise<T> {
   handle401(res)
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
-    throw new Error((err as { detail?: string })?.detail ?? `${res.status} ${res.statusText}`)
+    throw new Error(detailToMessage((err as { detail?: unknown })?.detail, `${res.status} ${res.statusText}`))
   }
   return res.json() as Promise<T>
 }
@@ -111,7 +130,7 @@ async function del(path: string): Promise<void> {
   handle401(res)
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
-    throw new Error(err?.detail ?? `${res.status} ${res.statusText}`)
+    throw new Error(detailToMessage(err?.detail, `${res.status} ${res.statusText}`))
   }
 }
 
@@ -174,7 +193,7 @@ export const api = {
     const res = await fetch(`${BASE}/document-types/${id}`, { method: 'DELETE', headers: authHeaders() })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
-      throw Object.assign(new Error(err?.detail ?? 'Error al eliminar'), { httpStatus: res.status })
+      throw Object.assign(new Error(detailToMessage(err?.detail, 'Error al eliminar')), { httpStatus: res.status })
     }
   },
 
@@ -211,7 +230,7 @@ export const api = {
     const res = await fetch(`${BASE}/workers/${workerId}/documents/download-zip?${params}`, { headers: authHeaders() })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
-      throw new Error(err?.detail ?? 'Error al descargar el ZIP')
+      throw new Error(detailToMessage(err?.detail, 'Error al descargar el ZIP'))
     }
     const blob = await res.blob()
     const match = res.headers.get('Content-Disposition')?.match(/filename="?([^"]+)"?/)
@@ -234,7 +253,7 @@ export const api = {
     const res = await fetch(`${BASE}/workers/bulk-upload`, { method: 'POST', body: form, headers: authHeaders() })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
-      throw new Error(err?.detail ?? `${res.status} ${res.statusText}`)
+      throw new Error(detailToMessage(err?.detail, `${res.status} ${res.statusText}`))
     }
     return res.json() as Promise<BulkUploadResult>
   },
@@ -262,7 +281,12 @@ export const api = {
     status: 'approved' | 'rejected'
     reviewer_notes?: string
   }): Promise<void> =>
-    patch<void>(`/worker-documents/${docId}/review`, payload),
+    // DocumentStatus del backend usa valores en MAYÚSCULAS (APPROVED/REJECTED);
+    // el estado del formulario es minúscula, se normaliza aquí para evitar el 422.
+    patch<void>(`/worker-documents/${docId}/review`, {
+      status: payload.status.toUpperCase(),
+      reviewer_notes: payload.reviewer_notes,
+    }),
 
   // Document edit (replace file and/or update dates and/or custom alert %)
   editDocument: async (docId: number, payload: {
@@ -282,7 +306,7 @@ export const api = {
     const res = await fetch(`${BASE}/worker-documents/${docId}`, { method: 'PATCH', body: form, headers: authHeaders() })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
-      throw Object.assign(new Error(err?.detail ?? 'Error al actualizar el documento'), { httpStatus: res.status })
+      throw Object.assign(new Error(detailToMessage(err?.detail, 'Error al actualizar el documento')), { httpStatus: res.status })
     }
   },
 
@@ -315,17 +339,22 @@ export const api = {
     issue_date?: string
     expiry_date?: string
     file: File
+    force_validation_override?: boolean
   }): Promise<void> => {
     const form = new FormData()
     form.append('vehicle_id', String(payload.vehicle_id))
     form.append('vehicle_document_type_id', String(payload.vehicle_document_type_id))
     if (payload.issue_date) form.append('issue_date', payload.issue_date)
     if (payload.expiry_date) form.append('expiry_date', payload.expiry_date)
+    if (payload.force_validation_override) form.append('force_validation_override', 'true')
     form.append('file', payload.file)
     const res = await fetch(`${BASE}/vehicle-documents/`, { method: 'POST', body: form, headers: authHeaders() })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
-      throw new Error(err?.detail ?? 'Error al subir el archivo')
+      throw Object.assign(
+        new Error(detailToMessage(err?.detail, 'Error al subir el archivo')),
+        { httpStatus: res.status, detail: err?.detail },
+      )
     }
   },
   editVehicleDocument: async (docId: number, payload: {
@@ -333,32 +362,47 @@ export const api = {
     expiry_date?: string
     custom_alert_days?: number | null
     file?: File
+    force_validation_override?: boolean
   }): Promise<void> => {
     const form = new FormData()
     if (payload.issue_date) form.append('issue_date', payload.issue_date)
     if (payload.expiry_date) form.append('expiry_date', payload.expiry_date)
     if (payload.file) form.append('file', payload.file)
+    if (payload.force_validation_override) form.append('force_validation_override', 'true')
     if (payload.custom_alert_days !== undefined)
       form.append('custom_alert_days', String(payload.custom_alert_days ?? 0))
     const res = await fetch(`${BASE}/vehicle-documents/${docId}`, { method: 'PATCH', body: form, headers: authHeaders() })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
-      throw new Error(err?.detail ?? 'Error al actualizar el documento')
+      throw Object.assign(
+        new Error(detailToMessage(err?.detail, 'Error al actualizar el documento')),
+        { httpStatus: res.status, detail: err?.detail },
+      )
     }
   },
-  scanVehicleDocument: async (file: File): Promise<VehicleAIScanResult> => {
+  scanVehicleDocument: async (
+    file: File,
+    vehicleDocumentTypeId?: number,
+  ): Promise<VehicleAIScanResult> => {
     const form = new FormData()
     form.append('file', file)
+    if (vehicleDocumentTypeId != null) {
+      form.append('vehicle_document_type_id', String(vehicleDocumentTypeId))
+    }
     const res = await fetch(`${BASE}/vehicle-documents/ai-scan`, { method: 'POST', body: form, headers: authHeaders() })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
-      throw new Error(err?.detail ?? 'Error al analizar el documento')
+      throw new Error(detailToMessage(err?.detail, 'Error al analizar el documento'))
     }
     return res.json() as Promise<VehicleAIScanResult>
   },
 
   reviewVehicleDocument: (docId: number, payload: { status: 'approved' | 'rejected'; reviewer_notes?: string }): Promise<void> =>
-    patch<void>(`/vehicle-documents/${docId}/review`, payload),
+    // Igual que reviewDocument: DocumentStatus del backend es MAYÚSCULAS.
+    patch<void>(`/vehicle-documents/${docId}/review`, {
+      status: payload.status.toUpperCase(),
+      reviewer_notes: payload.reviewer_notes,
+    }),
   getVehicleDocumentViewUrl: (docId: number) => `${BASE}/vehicle-documents/${docId}/view`,
   getVehicleDocumentDownloadUrl: (docId: number) => `${BASE}/vehicle-documents/${docId}/download`,
 
@@ -393,6 +437,7 @@ export const api = {
     issue_date?: string
     expiry_date?: string
     file: File
+    force_validation_override?: boolean
   }): Promise<void> => {
     const form = new FormData()
     form.append('worker_id', String(payload.worker_id))
@@ -400,11 +445,17 @@ export const api = {
     form.append('document_type_id', String(payload.document_type_id))
     if (payload.issue_date) form.append('issue_date', payload.issue_date)
     if (payload.expiry_date) form.append('expiry_date', payload.expiry_date)
+    if (payload.force_validation_override) form.append('force_validation_override', 'true')
     form.append('file', payload.file)
     const res = await fetch(`${BASE}/worker-documents/`, { method: 'POST', body: form, headers: authHeaders() })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
-      throw Object.assign(new Error(err?.detail ?? 'Error al subir el archivo'), { httpStatus: res.status })
+      // Adjunta el detail crudo (objeto en el 409 de validación) para que el form
+      // abra el diálogo de confirmación con los mensajes específicos.
+      throw Object.assign(
+        new Error(detailToMessage(err?.detail, 'Error al subir el archivo')),
+        { httpStatus: res.status, detail: err?.detail },
+      )
     }
   },
 
@@ -412,18 +463,25 @@ export const api = {
     const res = await fetch(`${BASE}/worker-documents/${docId}/archive`, { method: 'POST', headers: authHeaders() })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
-      throw new Error(err?.detail ?? 'Error al archivar el documento')
+      throw new Error(detailToMessage(err?.detail, 'Error al archivar el documento'))
     }
   },
 
-  scanWorkerDocument: async (file: File, validityDays?: number | null): Promise<import('@/lib/types').WorkerAIScanResult> => {
+  scanWorkerDocument: async (
+    file: File,
+    validityDays?: number | null,
+    documentTypeId?: number,
+    workerId?: number,
+  ): Promise<import('@/lib/types').WorkerAIScanResult> => {
     const form = new FormData()
     form.append('file', file)
     if (validityDays != null) form.append('validity_days', String(validityDays))
+    if (documentTypeId != null) form.append('document_type_id', String(documentTypeId))
+    if (workerId != null) form.append('worker_id', String(workerId))
     const res = await fetch(`${BASE}/worker-documents/ai-scan`, { method: 'POST', body: form, headers: authHeaders() })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
-      throw new Error(err?.detail ?? 'Error al analizar el documento')
+      throw new Error(detailToMessage(err?.detail, 'Error al analizar el documento'))
     }
     return res.json()
   },

@@ -17,6 +17,9 @@ class DocumentType(Base, TimestampMixin):
     )
     validity_days: Mapped[int | None] = mapped_column(Integer)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    # Si es False, la subida NO llama a la IA (extracción de fechas / escudos):
+    # el encargado ingresa las fechas manualmente. Ver "Validación IA por tipo".
+    ai_validation_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_global_base_requirement: Mapped[bool] = mapped_column(default=False, nullable=False)
     alert_percentage_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # ACHS / Mutual de Seguridad fields

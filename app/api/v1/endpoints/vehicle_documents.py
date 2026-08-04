@@ -15,7 +15,9 @@ from app.db.session import get_db
 from app.models.associations import DocumentStatus
 from app.models.vehicle_document import VehicleDocument
 from app.models.vehicle_document_type import VehicleDocumentType
+from app.schemas.ai_validation import ValidationWarning
 from app.schemas.vehicle_document import VehicleDocumentRead, VehicleDocumentReview
+from app.services.ai_validation import Dimension, combine
 from app.services.storage import (
     delete_file,
     read_upload_capped,
@@ -33,10 +35,32 @@ _W = [Depends(require_module(Module.vehiculos, PermissionLevel.write))]
 
 
 @router.post("/ai-scan", dependencies=[*_W, Depends(rate_limit_ai_scan)])
-async def ai_scan_vehicle_document(file: UploadFile = File(...)):
+async def ai_scan_vehicle_document(
+    file: UploadFile = File(...),
+    vehicle_document_type_id: int | None = Form(None),
+    db: AsyncSession = Depends(get_db),
+):
     """Preview scan: extract dates and doc type without blocking validation."""
     from app.core.config import settings
     from app.services.vehicle_ai_extractor import extract_and_validate
+
+    # Si se indica el tipo y tiene la validación de IA apagada, se SALTA la IA
+    # por completo (ni se llama a OpenAI): el usuario ingresará las fechas a mano.
+    expected_type_name: str | None = None
+    if vehicle_document_type_id is not None:
+        vdt = await db.get(VehicleDocumentType, vehicle_document_type_id)
+        if vdt is not None and not vdt.ai_validation_enabled:
+            return {
+                "issue_date": None,
+                "expiry_date": None,
+                "document_type_detected": None,
+                "ai_validation_enabled": False,
+                "match_confidence": "not_found",
+                "validation_action": "silent",
+                "warnings": [],
+                "conflict": None,
+            }
+        expected_type_name = vdt.name if vdt else None
 
     if not settings.OPENAI_API_KEY:
         raise HTTPException(status_code=503, detail="Servicio de IA no configurado.")
@@ -44,7 +68,9 @@ async def ai_scan_vehicle_document(file: UploadFile = File(...)):
     # Aplica el límite de tamaño ANTES de enviar nada a OpenAI.
     content = await read_upload_capped(file)
     try:
-        result = await extract_and_validate(content, file.content_type or "", file.filename or "")
+        result = await extract_and_validate(
+            content, file.content_type or "", file.filename or "", expected_type_name
+        )
     except APITimeoutError:
         raise HTTPException(status_code=504, detail="El análisis del documento tardó demasiado.")
     except ValueError as exc:
@@ -56,10 +82,26 @@ async def ai_scan_vehicle_document(file: UploadFile = File(...)):
             detail="El servicio de análisis no está disponible, intenta más tarde.",
         )
 
+    # Preview del veredicto de tipo (vehículos no tienen identidad).
+    verdict = combine([
+        Dimension(
+            key="type", verdict=result["match_confidence"],
+            reasoning=result.get("type_reasoning"),
+            expected=expected_type_name, detected=result.get("detected_document_name"),
+        ),
+    ])
+
     return {
         "issue_date": result["issue_date"],
         "expiry_date": result["expiry_date"],
         "document_type_detected": result["document_type_detected"],
+        "ai_validation_enabled": True,
+        "match_confidence": result["match_confidence"],
+        "type_reasoning": result.get("type_reasoning"),
+        "detected_document_name": result.get("detected_document_name"),
+        "validation_action": verdict.action,
+        "warnings": verdict.warnings,
+        "conflict": verdict.conflict,
     }
 
 
@@ -71,6 +113,9 @@ async def upload_vehicle_document(
     vehicle_document_type_id: int = Form(...),
     issue_date: str | None = Form(None, description="Fecha emisión YYYY-MM-DD"),
     expiry_date: str | None = Form(None, description="Fecha vencimiento YYYY-MM-DD"),
+    force_validation_override: bool = Form(
+        False, description="Reenviar tras un 409 para saltar el conflicto de tipo"
+    ),
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
 ):
@@ -99,8 +144,12 @@ async def upload_vehicle_document(
             detail="Formato de fecha inválido. Use YYYY-MM-DD.",
         )
 
-    # ── AI validation (Escudo de Tipo + Escudo de Vigencia) ──────────────────
-    if settings.OPENAI_API_KEY:
+    # ── AI validation: Escudo de Tipo (silencio/aviso/409) + Escudo de Vigencia ──
+    # Solo si el tipo tiene la validación de IA activada; si no, se salta (manual).
+    type_override_used = False
+    validation_notes: str | None = None
+    warnings: list[dict] = []
+    if settings.OPENAI_API_KEY and vdt.ai_validation_enabled:
         from app.services.vehicle_ai_extractor import extract_and_validate
 
         # Aplica el límite de tamaño ANTES de enviar nada a OpenAI.
@@ -122,18 +171,29 @@ async def upload_vehicle_document(
                 detail="El servicio de análisis no está disponible, intenta más tarde.",
             )
 
-        # Escudo de Tipo
-        if not ai["is_expected_document"]:
-            detected = ai.get("detected_document_name") or "un documento desconocido"
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"El documento no coincide. "
-                    f"Se esperaba un {vdt.name} pero el sistema detectó {detected}."
-                ),
-            )
+        # Escudo de Tipo — combinado (solo tipo; vehículos no tienen identidad).
+        verdict = combine([
+            Dimension(
+                key="type", verdict=ai["match_confidence"],
+                reasoning=ai.get("type_reasoning"),
+                expected=vdt.name, detected=ai.get("detected_document_name"),
+            ),
+        ])
+        validation_notes = verdict.notes
+        warnings = verdict.warnings
+        if verdict.action == "conflict":
+            if not force_validation_override:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "message": "El documento no coincide con el tipo esperado. "
+                        "Revísalo o confirma para subir de todas formas.",
+                        **verdict.conflict,
+                    },
+                )
+            type_override_used = True
 
-        # Escudo de Vigencia
+        # Escudo de Vigencia (bloqueo duro; NO lo cubre el override de tipo)
         ai_expiry_str = ai.get("expiry_date")
         if ai_expiry_str:
             try:
@@ -176,6 +236,8 @@ async def upload_vehicle_document(
         issue_date=parsed_issue,
         expiry_date=parsed_expiry,
         status=DocumentStatus.APPROVED,
+        type_override_used=type_override_used,
+        validation_notes=validation_notes,
     )
     db.add(doc)
     try:
@@ -191,7 +253,9 @@ async def upload_vehicle_document(
         .where(VehicleDocument.id == doc.id)
         .options(selectinload(VehicleDocument.vehicle_document_type))
     )
-    return refreshed.scalar_one()
+    response = VehicleDocumentRead.model_validate(refreshed.scalar_one())
+    response.warnings = [ValidationWarning(**w) for w in warnings]
+    return response
 
 
 @router.get("/{doc_id}/view", dependencies=_R)
@@ -256,6 +320,9 @@ async def edit_vehicle_document(
     issue_date: str | None = Form(None, description="Fecha emisión YYYY-MM-DD"),
     expiry_date: str | None = Form(None, description="Fecha vencimiento YYYY-MM-DD"),
     custom_alert_days: int | None = Form(None),
+    force_validation_override: bool = Form(
+        False, description="Reenviar tras un 409 para saltar el conflicto de tipo"
+    ),
     file: UploadFile | None = File(None),
     db: AsyncSession = Depends(get_db),
 ):
@@ -290,7 +357,8 @@ async def edit_vehicle_document(
         # ── AI validation (Escudo de Tipo + Escudo de Vigencia) ──────────────
         from app.core.config import settings
 
-        if settings.OPENAI_API_KEY:
+        # Solo si el tipo tiene la validación de IA activada; si no, se salta.
+        if settings.OPENAI_API_KEY and doc.vehicle_document_type.ai_validation_enabled:
             from app.services.vehicle_ai_extractor import extract_and_validate
 
             # Aplica el límite de tamaño ANTES de enviar nada a OpenAI.
@@ -315,16 +383,27 @@ async def edit_vehicle_document(
                     detail="El servicio de análisis no está disponible, intenta más tarde.",
                 )
 
-            # Escudo de Tipo
-            if not ai["is_expected_document"]:
-                detected = ai.get("detected_document_name") or "un documento desconocido"
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        f"El documento no coincide. Se esperaba un "
-                        f"{doc.vehicle_document_type.name} pero el sistema detectó {detected}."
-                    ),
-                )
+            # Escudo de Tipo — combinado (solo tipo). Silencio / aviso / 409.
+            verdict = combine([
+                Dimension(
+                    key="type", verdict=ai["match_confidence"],
+                    reasoning=ai.get("type_reasoning"),
+                    expected=doc.vehicle_document_type.name,
+                    detected=ai.get("detected_document_name"),
+                ),
+            ])
+            doc.validation_notes = verdict.notes
+            if verdict.action == "conflict":
+                if not force_validation_override:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail={
+                            "message": "El documento no coincide con el tipo esperado. "
+                            "Revísalo o confirma para subir de todas formas.",
+                            **verdict.conflict,
+                        },
+                    )
+                doc.type_override_used = True
 
             # Escudo de Vigencia
             ai_expiry_str = ai.get("expiry_date")

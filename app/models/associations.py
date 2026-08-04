@@ -132,6 +132,11 @@ class WorkerDocument(Base, TimestampMixin):
     # Soft-archive: excludes the document from active accreditation checks
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
+    # Auditoría de validación IA: si se usó force_validation_override para saltar un
+    # conflicto de tipo/identidad, y el/los reasoning de la IA al momento de subir.
+    validation_override_used: Mapped[bool] = mapped_column(default=False, nullable=False)
+    validation_notes: Mapped[str | None] = mapped_column(Text)
+
     # Relationships
     worker: Mapped["Worker"] = relationship(back_populates="documents")
     document_type: Mapped["DocumentType"] = relationship(back_populates="worker_documents")

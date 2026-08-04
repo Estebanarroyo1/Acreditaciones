@@ -41,16 +41,31 @@ async def resolve_document_dates(
     file: UploadFile | None,
     doc_type_name: str | None,
     effective_validity_days: int | None,
-) -> tuple[date | None, date | None]:
+    ai_enabled: bool = True,
+    expected_person_name: str | None = None,
+) -> tuple[date | None, date | None, dict | None]:
     """
-    Returns (parsed_issue, parsed_expiry).
+    Returns (parsed_issue, parsed_expiry, ai_result).
+    `ai_result` es el dict del extractor (veredictos de tipo/identidad + fechas) o
+    None si la IA no corrió (tipo manual, sin API key, sin archivo, o falló).
     Side-effect: seeks file back to position 0 after AI read (if AI ran).
+
+    Si `ai_enabled` es False (el tipo de documento tiene la validación de IA
+    apagada), se omite por completo la extracción de fechas por IA: se usan solo
+    las fechas manuales + el fallback por validity_days. Esto evita el costo de
+    la llamada a OpenAI para esos tipos.
+
+    `expected_person_name` (nombre del worker dueño del perfil) se pasa al extractor
+    para verificar identidad (solo por nombre). La COMBINACIÓN de veredictos y la
+    política silencio/aviso/confirmación las decide el endpoint de subida con
+    `app/services/ai_validation.py`; esta función solo resuelve fechas.
     """
     from app.core.config import settings
 
     parsed_issue, parsed_expiry = _parse_iso_dates(issue_date_str, expiry_date_str)
+    ai_result: dict | None = None
 
-    if file is not None and settings.OPENAI_API_KEY:
+    if file is not None and ai_enabled and settings.OPENAI_API_KEY:
         from openai import APITimeoutError
 
         from app.services.storage import read_upload_capped
@@ -60,8 +75,13 @@ async def resolve_document_dates(
         content = await read_upload_capped(file)
         try:
             ai = await extract_dates(
-                content, file.content_type or "", file.filename or "", doc_type_name
+                content,
+                file.content_type or "",
+                file.filename or "",
+                doc_type_name,
+                expected_person_name,
             )
+            ai_result = ai
             if parsed_issue is None and ai.get("issue_date"):
                 try:
                     parsed_issue = date.fromisoformat(ai["issue_date"])
@@ -99,4 +119,4 @@ async def resolve_document_dates(
             ),
         )
 
-    return parsed_issue, parsed_expiry
+    return parsed_issue, parsed_expiry, ai_result

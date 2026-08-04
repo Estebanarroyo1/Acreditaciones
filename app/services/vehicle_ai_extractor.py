@@ -63,40 +63,47 @@ async def extract_and_validate(
         issue_date              str | None   (YYYY-MM-DD)
         expiry_date             str | None   (YYYY-MM-DD)
         document_type_detected  str | None
-        is_expected_document    bool         (always True when expected_document_name is None)
-        detected_document_name  str | None   (populated when is_expected_document is False)
+        match_confidence        str          (veredicto de TIPO: match|likely_match|mismatch|not_found)
+        type_reasoning          str | None
+        detected_document_name  str | None   (nombre real cuando no calza)
+
+    match_confidence SIEMPRE es uno de los 4 valores; degrada a "not_found" si la IA
+    no lo devuelve o es inválido. Los vehículos no tienen identidad (solo tipo).
     """
     image_bytes, image_mime = await _to_image(content, mime, filename)
     b64 = base64.standard_b64encode(image_bytes).decode()
 
+    _json_schema = (
+        '{"issue_date":"YYYY-MM-DD o null",'
+        '"expiry_date":"YYYY-MM-DD o null",'
+        '"document_type_detected":"nombre del tipo de documento detectado",'
+        '"match_confidence":"match | likely_match | mismatch | not_found",'
+        '"type_reasoning":"breve explicación del match_confidence, o null",'
+        '"detected_document_name":"nombre real del documento si NO calza, o null"}'
+    )
     if expected_document_name:
         system_prompt = (
-            f"Eres un auditor experto en documentos vehiculares chilenos. "
+            "Eres un auditor experto en documentos vehiculares chilenos. "
             f"Se espera que el documento sea: '{expected_document_name}'.\n"
-            f"Debes:\n"
-            f"1. Verificar si el documento corresponde a '{expected_document_name}'.\n"
-            f"2. Extraer fecha de emisión y fecha de vencimiento.\n"
-            f"Responde EXCLUSIVAMENTE con este JSON (sin texto extra):\n"
-            f'{{"issue_date":"YYYY-MM-DD o null",'
-            f'"expiry_date":"YYYY-MM-DD o null",'
-            f'"document_type_detected":"nombre del documento detectado",'
-            f'"is_expected_document":true,'
-            f'"detected_document_name":null}}\n'
-            f"Si el documento NO corresponde a '{expected_document_name}', "
-            f"cambia is_expected_document a false y detected_document_name al nombre real."
+            "Debes: (1) extraer fecha de emisión y de vencimiento; (2) verificar el TIPO.\n"
+            f"VERIFICACIÓN DE TIPO (¿el documento es un '{expected_document_name}'?):\n"
+            "• match_confidence:\n"
+            "    - 'match': es claramente ese tipo.\n"
+            "    - 'likely_match': parece ese tipo pero es ambiguo o de baja calidad.\n"
+            "    - 'mismatch': es claramente OTRO tipo (pon detected_document_name con el nombre real).\n"
+            "    - 'not_found': no se puede determinar el tipo.\n"
+            "• type_reasoning: una frase breve explicando la decisión.\n"
+            f"Responde EXCLUSIVAMENTE con este JSON (sin texto extra):\n{_json_schema}"
         )
         user_text = (
-            f"¿Este documento es un '{expected_document_name}'? Extrae las fechas y verifica."
+            f"¿Este documento es un '{expected_document_name}'? Extrae las fechas y verifica el tipo."
         )
     else:
         system_prompt = (
             "Eres un auditor experto en documentos vehiculares chilenos. "
-            "Extrae la información del documento y responde EXCLUSIVAMENTE con este JSON:\n"
-            '{"issue_date":"YYYY-MM-DD o null",'
-            '"expiry_date":"YYYY-MM-DD o null",'
-            '"document_type_detected":"nombre del tipo de documento",'
-            '"is_expected_document":true,'
-            '"detected_document_name":null}'
+            "Extrae la información del documento. No se entregó un tipo esperado: usa "
+            "match_confidence='not_found' y type_reasoning=null.\n"
+            f"Responde EXCLUSIVAMENTE con este JSON:\n{_json_schema}"
         )
         user_text = "Analiza este documento y extrae las fechas y el tipo de documento."
 
@@ -129,10 +136,13 @@ async def extract_and_validate(
     except json.JSONDecodeError:
         data = {}
 
+    from app.services.ai_validation import normalize_verdict
+
     return {
         "issue_date": data.get("issue_date") or None,
         "expiry_date": data.get("expiry_date") or None,
         "document_type_detected": data.get("document_type_detected") or None,
-        "is_expected_document": bool(data.get("is_expected_document", True)),
+        "match_confidence": normalize_verdict(data.get("match_confidence")),
+        "type_reasoning": data.get("type_reasoning") or None,
         "detected_document_name": data.get("detected_document_name") or None,
     }

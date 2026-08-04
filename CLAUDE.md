@@ -248,6 +248,100 @@ IA en upload/edit) están protegidos:
   usuario/minuto; al exceder → **429**. Es un contador **en memoria por proceso**:
   si se corre uvicorn con múltiples workers, migrar a Redis (contador compartido).
 
+### Validación de IA activable/desactivable POR TIPO de documento
+
+Cada tipo de documento (trabajadores **y** vehículos) tiene el flag
+`ai_validation_enabled: bool` (default `True`, NOT NULL) en su modelo
+(`DocumentType`, `VehicleDocumentType`), expuesto en los schemas de lectura y
+crear/editar, y en `frontend/lib/types.ts`. Permite que el encargado opte por
+**revisión manual** en los tipos que quiera.
+
+- **`False` ⇒ la subida NO llama a OpenAI** (ni escudo de tipo, ni de identidad,
+  ni extracción de fechas por IA): el usuario ingresa las fechas manualmente y el
+  documento se guarda con el flujo clásico. Esto también **ahorra el costo** de la
+  llamada a OpenAI para esos tipos.
+- **Dónde se aplica el corte** (siempre ANTES de contactar OpenAI):
+  - Trabajadores: `resolve_document_dates(..., ai_enabled=doc_type.ai_validation_enabled)`
+    en `app/services/worker_documents.py` (subida y edición).
+  - Vehículos: la condición inline `if settings.OPENAI_API_KEY and vdt.ai_validation_enabled:`
+    en `upload_vehicle_document` / edición.
+  - `/ai-scan` (ambos dominios): reciben `document_type_id` / `vehicle_document_type_id`
+    opcional; si el tipo tiene la validación apagada, responden `ai_validation_enabled=False`
+    con fechas `null` **sin** llamar a OpenAI.
+- **UI (toggle por tipo):** toggle "Validación con IA" en crear/editar tipo de
+  trabajador (`GlobalReqsSection.tsx` + `EditDocTypeModal.tsx`) y de vehículo
+  (`app/vehiculos/documentacion/page.tsx`), con indicador **IA/Manual** en cada
+  listado (`DocTypeRow.tsx` / acción "IA: on/off" por fila).
+- **UI (flujo combinado):** los formularios de subida (`UploadForm.tsx`,
+  `vehicle-profile/DocForm.tsx`) llaman `/ai-scan` con el `document_type_id`
+  (+ `worker_id`) vía el hook `useDocumentAIScan`, y muestran el veredicto con el
+  componente compartido `components/validation/ValidationNotice.tsx`: aviso ámbar
+  en `warn`, advertencia roja específica en `conflict`. Ante `conflict` (preview o
+  409) el botón pasa a "Revisar archivo" y aparece "Subir de todas formas" con
+  checkbox de confirmación que envía `force_validation_override=true`. Todo `match`
+  → sin fricción.
+- **Migración:** `e1f2a3b4c5d6` (agrega la columna con `server_default=true` para
+  respaldar filas existentes y luego lo retira; downgrade la elimina).
+
+### Verificación de titular por IA (SOLO trabajadores, solo por nombre)
+
+Cuando `ai_validation_enabled=True`, además de verificar el TIPO, la IA verifica
+que el documento pertenece a la **persona correcta** comparando **solo el nombre**
+(NUNCA RUT/DNI — decisión de diseño). Aplica **solo a documentos de trabajadores**
+(los vehículos no tienen persona dueña).
+
+- **Contrato de `extract_dates()`** (`app/services/worker_ai_extractor.py`) — el
+  dict de retorno agrega dos campos:
+  - `person_name_detected: str | None` — nombre del titular tal como aparece en el
+    documento (o `None`).
+  - `person_match: str` — **siempre** uno de `"match" | "likely_match" | "mismatch"
+    | "not_found"`. Si la IA no lo devuelve o devuelve un valor inválido, degrada a
+    `"not_found"` (seguro: no alarma).
+    - `match`: corresponde claramente al esperado (tolera orden invertido, segundo
+      nombre/apellido ausente, tildes, mayúsculas, abreviaturas).
+    - `likely_match`: coincidencia parcial o ambigua.
+    - `mismatch`: es claramente de OTRA persona.
+    - `not_found`: el documento no muestra titular (genérico) → **no alarma**.
+- **Nombre esperado:** el endpoint de subida/edición lo obtiene **de la BD** a
+  partir del `worker_id` (`first_name + last_name`), **nunca** de un valor enviado
+  por el cliente. Se pasa vía `resolve_document_dates(..., expected_person_name=...)`.
+- El extractor también agrega `identity_reasoning` (frase breve de la IA). El TIPO se
+  verifica análogamente con `match_confidence` + `type_reasoning` (misma escala de 4
+  valores). La **acción** ante los veredictos la decide el veredicto combinado (abajo).
+
+### Veredicto combinado y política silencio / aviso / confirmación
+
+`app/services/ai_validation.py` combina los veredictos de **tipo** (`match_confidence`)
+e **identidad** (`person_match`) tomando el **PEOR** (`mismatch` > `likely_match` >
+`match`/`not_found`; `not_found` es neutro). Trabajadores combinan {tipo, identidad};
+**vehículos solo {tipo}** (no hay identidad). NO hay bloqueo duro:
+
+| Peor veredicto | Acción | HTTP | Efecto |
+|----------------|--------|------|--------|
+| `match` / `not_found` | `silent` | 201 | guarda sin ruido |
+| `likely_match` | `warn` | 201 | guarda + `warnings[]` (nivel `info`, uno por dimensión dudosa con su `reasoning`) |
+| `mismatch` | `conflict` | **409** | NO guarda; cuerpo estructurado con cada problema |
+
+- **Cuerpo del 409** (`detail`): `{"message", "retryable": true, "override_field":
+  "force_validation_override", "type": {expected, detected, reasoning}?, "identity":
+  {expected_name, detected_name, reasoning}?}` — solo aparecen las dimensiones en
+  `mismatch`.
+- **Override único:** un solo flag de formulario **`force_validation_override`**
+  (bool) cubre tipo **e** identidad, en subida y edición de ambos módulos. Reenviar
+  con `true` guarda igual. Protegido por `require_module(..., WRITE)` — **cualquier
+  usuario con escritura** puede usarlo (NO se exige admin).
+- **Auditoría (migración `f2a3b4c5d6e7`):**
+  - `WorkerDocument.validation_override_used: bool` + `validation_notes: str|null`.
+  - `VehicleDocument.type_override_used: bool` + `validation_notes: str|null` (solo tipo).
+  - `validation_notes` guarda el/los `reasoning` de la IA al momento de subir (para
+    medir después si la IA acierta).
+- **`/ai-scan` (preview):** devuelven ambos veredictos (`match_confidence`,
+  `person_match`), sus `reasoning`, `validation_action` y `warnings[]`/`conflict`
+  para que el frontend muestre todo ANTES de subir. Reciben `document_type_id`
+  (+ `worker_id` en trabajadores) para calcular los veredictos.
+- **Escudo de Vigencia (vehículos):** el bloqueo por documento vencido (**400**) es
+  independiente y NO lo cubre `force_validation_override`.
+
 ## Tolerancia a fallas e higiene de errores
 
 ### Manejador global de excepciones (`app/main.py`)

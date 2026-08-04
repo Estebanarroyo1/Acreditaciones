@@ -8,9 +8,16 @@ import { getExpiryStatus } from './utils'
 interface Options {
   validityDays?: number | null
   initialExpiryDate?: string
+  documentTypeId?: number
+  workerId?: number
 }
 
-export function useDocumentAIScan({ validityDays, initialExpiryDate = '' }: Options = {}) {
+export function useDocumentAIScan({
+  validityDays,
+  initialExpiryDate = '',
+  documentTypeId,
+  workerId,
+}: Options = {}) {
   const [file, setFile] = useState<File | null>(null)
   const [issueDate, setIssueDate] = useState('')
   const [expiryDate, setExpiryDate] = useState(initialExpiryDate)
@@ -45,7 +52,7 @@ export function useDocumentAIScan({ validityDays, initialExpiryDate = '' }: Opti
     setSuggestedExpiry(null)
     setScanNoResults(false)
     try {
-      const result = await api.scanWorkerDocument(file, validityDays)
+      const result = await api.scanWorkerDocument(file, validityDays, documentTypeId, workerId)
       setAiResult(result)
       const foundAny = !!(result.issue_date || result.expiry_date)
       setScanNoResults(!foundAny)
