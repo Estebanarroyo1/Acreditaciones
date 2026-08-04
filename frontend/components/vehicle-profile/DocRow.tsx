@@ -16,6 +16,21 @@ export function DocRow({ check, vehicleId, docTypes, onRefresh }: {
   const [open, setOpen] = useState(false)
   const { canWrite } = usePermissions()
 
+  // El endpoint /view exige token; se abre la pestaña de inmediato (para no
+  // dispararse el bloqueo de popups) y se le carga el archivo como blob autenticado.
+  const openDocument = (docId: number) => {
+    const win = window.open('about:blank', '_blank')
+    api
+      .fetchFileBlobUrl(api.getVehicleDocumentViewUrl(docId))
+      .then((url) => {
+        if (win) win.location.href = url
+        setTimeout(() => URL.revokeObjectURL(url), 60000)
+      })
+      .catch(() => {
+        if (win) win.close()
+      })
+  }
+
   const expiryCell = () => {
     if (check.check_status === 'missing' || !check.expiry_date)
       return <span className="text-slate-300">—</span>
@@ -63,14 +78,13 @@ export function DocRow({ check, vehicleId, docTypes, onRefresh }: {
         <td className="px-3 py-1 text-right whitespace-nowrap">
           <div className="flex items-center justify-end gap-2">
             {check.vehicle_document_id && (
-              <a
-                href={api.getVehicleDocumentViewUrl(check.vehicle_document_id)}
-                target="_blank"
-                rel="noreferrer"
+              <button
+                type="button"
+                onClick={() => openDocument(check.vehicle_document_id as number)}
                 className="text-[11px] text-[#003f7a] hover:underline font-medium"
               >
                 Ver
-              </a>
+              </button>
             )}
             {canWrite('vehiculos') && (
               <button

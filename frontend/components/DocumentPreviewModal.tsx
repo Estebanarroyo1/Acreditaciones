@@ -11,9 +11,11 @@ interface Props {
 }
 
 export function DocumentPreviewModal({ docId, label, onClose }: Props) {
-  // Cache-busting sequence: increments each time docId becomes non-null so the iframe
-  // re-fetches even when the URL path is the same after a file replacement.
-  const [openSeq, setOpenSeq] = useState(0)
+  // El archivo se descarga con el token (Bearer) y se muestra como object URL:
+  // el iframe/enlace no pueden adjuntar el header en una navegación directa.
+  const [blobUrl, setBlobUrl] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
 
   useEffect(() => {
     if (!docId) return
@@ -25,12 +27,36 @@ export function DocumentPreviewModal({ docId, label, onClose }: Props) {
   }, [docId, onClose])
 
   useEffect(() => {
-    if (docId) Promise.resolve().then(() => setOpenSeq(n => n + 1))
+    if (!docId) return
+    let active = true
+    let created: string | null = null
+    void (async () => {
+      setLoading(true)
+      setError('')
+      setBlobUrl(null)
+      try {
+        const url = await api.fetchFileBlobUrl(api.getDocumentViewUrl(docId))
+        if (!active) {
+          URL.revokeObjectURL(url)
+          return
+        }
+        created = url
+        setBlobUrl(url)
+        setLoading(false)
+      } catch (e) {
+        if (active) {
+          setError(e instanceof Error ? e.message : 'No se pudo cargar el documento.')
+          setLoading(false)
+        }
+      }
+    })()
+    return () => {
+      active = false
+      if (created) URL.revokeObjectURL(created)
+    }
   }, [docId])
 
   if (typeof document === 'undefined' || !docId) return null
-
-  const viewUrl = `${api.getDocumentViewUrl(docId)}?n=${openSeq}`
 
   return createPortal(
     <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
@@ -48,17 +74,19 @@ export function DocumentPreviewModal({ docId, label, onClose }: Props) {
             <span className="text-sm font-medium text-slate-700 truncate">{label}</span>
           </div>
           <div className="flex items-center gap-3 shrink-0 ml-4">
-            <a
-              href={viewUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-800 transition-colors"
-            >
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
-              </svg>
-              Abrir en nueva pestaña
-            </a>
+            {blobUrl && (
+              <a
+                href={blobUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-800 transition-colors"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+                </svg>
+                Abrir en nueva pestaña
+              </a>
+            )}
             <button
               onClick={onClose}
               className="p-1.5 rounded-lg hover:bg-slate-200 transition-colors text-slate-500 hover:text-slate-800"
@@ -73,11 +101,19 @@ export function DocumentPreviewModal({ docId, label, onClose }: Props) {
 
         {/* Content */}
         <div className="flex-1 overflow-hidden rounded-b-xl bg-slate-100">
-          <iframe
-            src={viewUrl}
-            className="w-full h-full border-0"
-            title={label}
-          />
+          {loading && (
+            <div className="w-full h-full flex items-center justify-center text-sm text-slate-500">
+              Cargando documento…
+            </div>
+          )}
+          {error && !loading && (
+            <div className="w-full h-full flex items-center justify-center px-6 text-center text-sm text-red-600">
+              {error}
+            </div>
+          )}
+          {blobUrl && !loading && !error && (
+            <iframe src={blobUrl} className="w-full h-full border-0" title={label} />
+          )}
         </div>
       </div>
     </div>,

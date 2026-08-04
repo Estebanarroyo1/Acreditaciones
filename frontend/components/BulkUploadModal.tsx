@@ -103,16 +103,16 @@ export function BulkUploadModal({ isOpen, onClose, onSuccess }: Props) {
                   <p className="text-xs text-slate-500 mt-0.5 mb-3">
                     Completa el Excel con los datos del personal. La fila 2 es una guía — puedes eliminarla.
                   </p>
-                  <a
-                    href={api.getBulkTemplate()}
-                    download="plantilla_trabajadores.xlsx"
+                  <button
+                    type="button"
+                    onClick={() => api.downloadFile(api.getBulkTemplate(), 'plantilla_trabajadores.xlsx')}
                     className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-slate-300 rounded-lg text-sm font-semibold text-slate-700 hover:bg-slate-50 hover:border-slate-400 transition-colors shadow-sm"
                   >
                     <svg className="w-4 h-4 text-green-600" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
                     </svg>
                     Descargar Plantilla Excel
-                  </a>
+                  </button>
                 </div>
               </div>
 

@@ -219,11 +219,41 @@ export const api = {
     return getPaged<WorkerGlobalStatus>(`/accreditation/workers/global-status?${q}`)
   },
 
-  // Document URLs (for use in <a href> / <iframe src> tags)
+  // Document URLs (rutas de los endpoints de archivo protegidos)
   getDocumentDownloadUrl: (docId: number) =>
     `${BASE}/worker-documents/${docId}/download`,
   getDocumentViewUrl: (docId: number) =>
     `${BASE}/worker-documents/${docId}/view`,
+
+  // Los endpoints /view y /download exigen `Authorization: Bearer`, que una
+  // navegación directa (iframe src / <a href> / nueva pestaña) NO adjunta. Por eso
+  // se descarga el archivo con fetch autenticado y se entrega como object URL (blob).
+  fetchFileBlobUrl: async (url: string): Promise<string> => {
+    const res = await fetch(url, { headers: authHeaders(), cache: 'no-store' })
+    handle401(res)
+    if (!res.ok) throw new Error(`No se pudo cargar el archivo (${res.status}).`)
+    return URL.createObjectURL(await res.blob())
+  },
+
+  // Descarga autenticada: fetch + blob + click en un <a download> temporal.
+  // Prefiere el nombre original del header Content-Disposition (expuesto por CORS).
+  downloadFile: async (url: string, fallbackName: string): Promise<void> => {
+    const res = await fetch(url, { headers: authHeaders(), cache: 'no-store' })
+    handle401(res)
+    if (!res.ok) throw new Error(`No se pudo descargar el archivo (${res.status}).`)
+    let filename = fallbackName
+    const cd = res.headers.get('Content-Disposition')
+    const match = cd && /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(cd)
+    if (match) filename = decodeURIComponent(match[1])
+    const objectUrl = URL.createObjectURL(await res.blob())
+    const a = document.createElement('a')
+    a.href = objectUrl
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 10000)
+  },
 
   // Bulk ZIP download of a worker's documents (global requirements or one project)
   downloadWorkerDocumentsZip: async (
